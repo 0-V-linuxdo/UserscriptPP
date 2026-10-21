@@ -20,3 +20,15 @@ export const IS_DEV = typeof __USPP_DEV__ !== "undefined" ? __USPP_DEV__ : false
 export const BUILD_TYPE = IS_DEV ? "development" : "production";
 
 export const isChromium = () => !!W.chrome;
+
+// 本条脚本自己的身份(构建时由站点目录的 userscript.json 给出)。页面上留下的名字都带 SCRIPT_ID,两条基于框架的脚本互不干扰
+const SCRIPT = typeof __USPP_SCRIPT__ !== "undefined" ? __USPP_SCRIPT__ : { id: "dev", name: "Userscript++ script", global: null };
+export const SCRIPT_ID = SCRIPT.id;
+export const SCRIPT_NAME = SCRIPT.name;
+/** 控制台调试用的全局名字(开发构建缺省开启,发布构建缺省关闭);null 表示不挂 */
+export const GLOBAL_NAME = SCRIPT.global || null;
+/** 实例挂在 window 的这个 Symbol 上(不占用普通全局名字);补丁代码通过 INSTANCE_EXPR 找到本实例 */
+export const INSTANCE_KEY = Symbol.for(`uspp:${SCRIPT_ID}`);
+export const INSTANCE_EXPR = `window[Symbol.for(${JSON.stringify(`uspp:${SCRIPT_ID}`)})]`;
+/** 公开接口版本:有不兼容改动时递增 */
+export const API_VERSION = 1;
