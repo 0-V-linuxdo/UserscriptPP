@@ -1,5 +1,5 @@
 // 设置存储:代理 + 变更通知 + 多来源读取合并 + 防抖写入 + 多标签页同步
-import { W, GM } from "../env.js";
+import { W, GM, SCRIPT_ID } from "../env.js";
 import { Logger } from "./logger.js";
 import { debounce } from "./utils.js";
 import { isGeneric } from "./sites.js";
@@ -7,8 +7,11 @@ import { dispatch, Events } from "./events.js";
 
 const logger = new Logger("Settings", "#86efac");
 
+/** 脚本管理器存储里的键(脚本管理器本来就按脚本隔开) */
 export const STORAGE_KEY = "UserscriptPPSettings";
-const IDB_NAME = "UserscriptPP";
+/** 网站存储(localStorage、IndexedDB)由页面上所有脚本共用,键和库名带脚本 ID */
+export const SITE_STORAGE_KEY = `UserscriptPP:${SCRIPT_ID}:settings`;
+const IDB_NAME = `UserscriptPP:${SCRIPT_ID}`;
 const IDB_STORE = "kv";
 const BIGINT_TAG = "$usppBigint";
 
@@ -182,7 +185,7 @@ async function idbSet(key, value) {
 }
 
 function lsGet() {
-    try { return (W.localStorage || localStorage).getItem(STORAGE_KEY); } catch { return null; }
+    try { return (W.localStorage || localStorage).getItem(SITE_STORAGE_KEY); } catch { return null; }
 }
 
 // ---------- 读取 ----------
@@ -244,7 +247,7 @@ const useSiteStorage = () => !isGeneric();
 
 export async function loadAsync() {
     const sources = [["GM", async () => GM.get ? await GM.get(STORAGE_KEY) : null]];
-    if (useSiteStorage()) sources.push(["IndexedDB", () => idbGet(STORAGE_KEY)], ["localStorage", lsGet]);
+    if (useSiteStorage()) sources.push(["IndexedDB", () => idbGet(SITE_STORAGE_KEY)], ["localStorage", lsGet]);
     const found = [];
     for (const [name, read] of sources) {
         try {
@@ -336,7 +339,7 @@ export function installCrossTabSync() {
     }
     if (useSiteStorage()) {
         W.addEventListener("storage", e => {
-            if (e.key !== STORAGE_KEY || e.newValue == null) return;
+            if (e.key !== SITE_STORAGE_KEY || e.newValue == null) return;
             const data = parseStored(e.newValue);
             if (data) applyRemote(data);
         });
@@ -364,8 +367,8 @@ export async function saveNow() {
         } catch (e) { logger.warn("写入设置失败", e); }
     }
     if (!useSiteStorage()) return;
-    try { (W.localStorage || localStorage).setItem(STORAGE_KEY, json); } catch (e) { logger.debug("写入 localStorage 备份失败", e); }
-    try { await idbSet(STORAGE_KEY, json); } catch (e) { logger.debug("写入 IndexedDB 备份失败", e); }
+    try { (W.localStorage || localStorage).setItem(SITE_STORAGE_KEY, json); } catch (e) { logger.debug("写入 localStorage 备份失败", e); }
+    try { await idbSet(SITE_STORAGE_KEY, json); } catch (e) { logger.debug("写入 IndexedDB 备份失败", e); }
 }
 
 let pendingSave = false;

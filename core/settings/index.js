@@ -1,7 +1,8 @@
 // 核心插件 Settings:框架设置面板、菜单命令入口、主题与 Quick CSS 的加载、系统数据承载
+import { SCRIPT_NAME } from "../env.js";
 import { definePlugin, definePluginSettings, OptionType, migratePluginSetting } from "../lib/plugins.js";
 import { SettingsStore } from "../lib/settings.js";
-import { applyAllThemes, applyQuickCss, isThemesEnabled, migrateLegacyLayout, SITES_PATH } from "../lib/themes.js";
+import { applyAllThemes, applyQuickCss, isThemesEnabled, SITES_PATH } from "../lib/themes.js";
 import { getSite } from "../lib/sites.js";
 import { addSlotItem, removeSlotItem } from "../lib/slots.js";
 
@@ -12,7 +13,7 @@ const settings = definePluginSettings({
     showSiteEntry: {
         type: OptionType.BOOLEAN,
         default: true,
-        description: "Show the Userscript++ entry in this site's own menus and settings.",
+        description: "Show this script's entry in the site's own menus and settings.",
         // 只有声明了 settingsHost 的站点才有站点入口
         get hidden() { return !getSite().settingsHost; },
     },
@@ -42,7 +43,6 @@ export default definePlugin({
 
     start() {
         migratePluginSetting(NAME, "showSiteEntry", "showMenu");
-        migrateLegacyLayout();
         applyQuickCss();
         if (isThemesEnabled()) applyAllThemes();
         // 分区数据(当前站点和"所有站点"主题)变化时重新应用,包括别的标签页同步过来的
@@ -53,7 +53,7 @@ export default definePlugin({
             queueMicrotask(() => { queued = false; applyQuickCss(); applyAllThemes(); });
         };
         for (const k of [SITES_PATH, "plugins.Settings.themesEnabled", "plugins.Settings.onlineThemesEnabled"]) SettingsStore.addPrefixChangeListener(k, this._apply);
-        addSlotItem("menuCommand", MENU_COMMAND_ID, { label: "Userscript++ settings", order: -1000, onSelect: () => openSettings() });
+        addSlotItem("menuCommand", MENU_COMMAND_ID, { label: `${SCRIPT_NAME} settings`, order: -1000, onSelect: () => openSettings() });
     },
     stop() {
         if (this._apply) for (const k of [SITES_PATH, "plugins.Settings.themesEnabled", "plugins.Settings.onlineThemesEnabled"]) SettingsStore.removePrefixChangeListener(k, this._apply);

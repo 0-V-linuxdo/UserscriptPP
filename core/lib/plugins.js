@@ -1,6 +1,7 @@
 // 插件模型:定义、启用判定、启动/停止、开关、运行时注册
 import { isChromium, IS_DEV } from "../env.js";
 import { Logger } from "./logger.js";
+import { diag, trace } from "./diag.js";
 import { Settings, PlainSettings, SettingsStore, setDefaultResolver } from "./settings.js";
 import { addPatch } from "./turbopack.js";
 import { enableStyle, disableStyle } from "./styles.js";
@@ -230,6 +231,8 @@ export function startPlugin(p, stack = []) {
     if (typeof p === "string") p = plugins[p];
     if (!p) return false;
     if (p.started) return true;
+    if (diag.disablePlugins.includes(p.name)) { trace("plugin.start.skipped", p.name); return false; }
+    trace("plugin.start", p.name);
     if (stack.includes(p.name)) {
         logger.error(`发现循环依赖:${[...stack, p.name].join(" -> ")}`);
         return false;

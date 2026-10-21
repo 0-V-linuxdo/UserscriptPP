@@ -1,9 +1,10 @@
-// 把框架设置嵌进 Grok:设置对话框里的 "Userscript++" 分组,头像菜单里的 "Userscript++" 子菜单
+// 把框架设置嵌进 Grok:设置对话框里以脚本名命名的分组,头像菜单里同名的子菜单
 import { U, h, Fragment, ErrorBoundary, useSubscription } from "./u.js";
 import { common, whenCommon } from "./common.js";
 
-const GROUP_ID = "uspp";
-const GROUP_LABEL = "Userscript++";
+// 构建时 uspp_ 会被改写成 uspp_<脚本ID>_,同页多条脚本的分组互不冲突
+const GROUP_ID = "uspp_settings";
+const groupLabel = () => U.scriptName;
 const PLUGINS_TIP = "Toggle features. Some need a reload. Click the sliders icon to configure.";
 const ENTRY_PATH = "plugins.Settings.showSiteEntry";
 
@@ -104,7 +105,7 @@ function AvatarMenu() {
         return p && h(Item, { key, onClick: () => open({ tab: key }), "data-uspp-menu": key.toLowerCase() }, icon(p.icon), p.label);
     };
     return h(Sub, { "data-uspp-avatar-menu": "" },
-        h(Trigger, { "data-uspp-menu": "root" }, icon(icons.LogoIcon), GROUP_LABEL),
+        h(Trigger, { "data-uspp-menu": "root" }, icon(icons.LogoIcon), groupLabel()),
         h(Content, null,
             list.length > 0 && h(Sub, null,
                 h(Trigger, { "data-uspp-menu": "plugins" }, icon(icons.PuzzleIcon), "Plugins"),
@@ -158,7 +159,7 @@ function enableFallback(kind) {
         }));
         // 分组名:未知分组的标题为空
         whenModule(["navGroupLabelStyle"], K => U.addRenderHook("div", (props, key, render) => {
-            if (props.className === K.navGroupLabelStyle && props.children == null) return render({ ...props, children: GROUP_LABEL });
+            if (props.className === K.navGroupLabelStyle && props.children == null) return render({ ...props, children: groupLabel() });
         }));
         U.registerInjectionFallback("Settings", "设置标签名");
     } else if (kind === "avatar") {
@@ -186,6 +187,7 @@ export function installSettingsFallbacks() {
 }
 
 export const settingsHost = {
+    get groupLabel() { return groupLabel(); },
     open,
     isOpen,
     // 补丁记在核心 Settings 插件名下,$self 指向本对象
@@ -206,7 +208,7 @@ export const settingsHost = {
             replacement: [
                 {
                     match: /(\i=>\{switch\(\i\)\{)(case"general":return \i\("settings-nav-group\.general")/,
-                    replace: '$1case"uspp":return"Userscript++";$2',
+                    replace: '$1case"uspp_settings":return $self.groupLabel;$2',
                 },
                 {
                     match: /default:(return\(0,\i\.logError\)\("SettingsDialog:tabLabel",`No label for settings tab \$\{(\i)\.id\}`\))/,

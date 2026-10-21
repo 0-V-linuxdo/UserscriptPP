@@ -1,4 +1,4 @@
-// Grok 参考适配:只通过公开接口(工厂参数 U,即 window.UserscriptPP)使用框架
+// Grok 参考适配(示例源码,不发布):只通过工厂参数 U(本脚本的框架实例)使用框架
 import { bindApi } from "./u.js";
 import { common } from "./common.js";
 import { startStreamEvents } from "./stream.js";
@@ -25,8 +25,6 @@ export default U => {
         ready: { module: m => typeof m?.useRoutingStore === "function", timeout: 15000 },
         // 样式放在 <head> 的容器里,方便在开发者工具里查看
         styleHost: "element",
-        // 旧版把主题和 Quick CSS 存在系统数据顶层,它们迁到本站分区
-        legacySettings: true,
         theme: () => (document.documentElement.classList.contains("dark") ? "dark" : "light"),
         renderer() {
             const React = common.React, client = common.ReactDOMClient, dom = common.ReactDOM;

@@ -7,7 +7,7 @@ import {
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
 import { openModal, confirmDialog } from "../ui/modal.js";
-import { isChromium } from "../env.js";
+import { isChromium, SCRIPT_NAME } from "../env.js";
 import {
     PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, LockIcon, WarningIcon, ChromiumIcon, WrenchIcon,
 } from "../ui/icons.js";
@@ -74,7 +74,7 @@ function useReloadTracker() {
 function Badges({ p }) {
     const out = [];
     const failed = !p.required && isPluginEnabled(p.name) && !p.started;
-    if (p.required) out.push(h(Tooltip, { key: "req", content: "This plugin is required for Userscript++ to work" }, h("span", { className: "uspp-icon-badge" }, h(LockIcon, { size: 3.5 }))));
+    if (p.required) out.push(h(Tooltip, { key: "req", content: `This plugin is required for ${SCRIPT_NAME} to work` }, h("span", { className: "uspp-icon-badge" }, h(LockIcon, { size: 3.5 }))));
     if (failed) out.push(h(Tooltip, { key: "fail", content: "This plugin failed to start" }, h("span", { className: "uspp-icon-badge uspp-warn" }, h(WarningIcon, { size: 3.5 }))));
     if (p.chromiumOnly) out.push(h(Tooltip, { key: "chr", content: "Chromium only" }, h("span", { className: "uspp-icon-badge" }, h(ChromiumIcon, { size: 3.5 }))));
     if (p.dev) out.push(h(Tooltip, { key: "dev", content: "Development build only" }, h("span", { className: "uspp-icon-badge" }, h(WrenchIcon, { size: 3.5 }))));

@@ -1,4 +1,4 @@
-import { IS_DEV } from "../env.js";
+import { IS_DEV, SCRIPT_NAME } from "../env.js";
 
 const COLORS = { log: "#a78bfa", info: "#38bdf8", warn: "#f59e0b", error: "#ef4444", debug: "#9ca3af" };
 
@@ -11,7 +11,7 @@ export class Logger {
         if (level === "debug" && !IS_DEV) return;
         const fn = console[level] || console.log;
         fn.call(console,
-            `%c Userscript++ %c %c ${this.name} `,
+            `%c ${SCRIPT_NAME} %c %c ${this.name} `,
             `background:${COLORS[level]};color:#000;border-radius:4px 0 0 4px;font-weight:bold`,
             "",
             `background:${this.color};color:#000;border-radius:0 4px 4px 0`,

@@ -1,4 +1,4 @@
-// 本适配接触框架的唯一途径:公开接口 window.UserscriptPP(站点工厂被调用时填入)
+// 本适配接触框架的唯一途径:工厂参数 U(本脚本自己的框架实例,站点工厂被调用时填入)
 export let U = null;
 export const bindApi = api => { U = api; };
 
@@ -29,7 +29,7 @@ function boundaryClass() {
     EB = class UsppGrokBoundary extends React.Component {
         constructor(props) { super(props); this.state = { error: null }; }
         static getDerivedStateFromError(error) { return { error }; }
-        componentDidCatch(error, info) { console.error("[Userscript++] 组件渲染出错", this.props.label || "", error, info?.componentStack); }
+        componentDidCatch(error, info) { console.error(`[${U.scriptName}] 组件渲染出错`, this.props.label || "", error, info?.componentStack); }
         render() {
             if (this.state.error) { const fb = this.props.fallback; return typeof fb === "function" ? fb(this.state.error) : (fb ?? null); }
             return this.props.children ?? null;

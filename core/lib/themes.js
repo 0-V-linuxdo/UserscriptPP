@@ -54,29 +54,6 @@ export function writePartition(key = siteKey()) {
 }
 const themesOf = part => (Array.isArray(part?.themes) ? part.themes : []);
 
-/** 旧版(不分区)的主题、Quick CSS、构建指纹,搬到声明了 legacySettings 的站点分区 */
-export function migrateLegacyLayout() {
-    const r = raw();
-    const keys = ["themes", "customCSS", "customCSSEnabled", "chunkFingerprint"];
-    if (!keys.some(k => k in r) && !("customCSSMatches" in r)) return false;
-    const target = getSites().find(s => s.legacySettings)?.id;
-    if (target) {
-        const plain = readPartition(target);
-        const store = writePartition(target);
-        for (const k of keys) {
-            if (!(k in r) || k in plain) continue;
-            let v = r[k];
-            if (k === "themes" && Array.isArray(v)) v = v.map(t => {
-                const { matches, ...rest } = t || {};
-                return Array.isArray(matches) && matches.some(m => m === "*" || m === "<all_urls>" || m === "*://*/*") ? { ...rest, allSites: true } : rest;
-            });
-            store[k] = v;
-        }
-    }
-    for (const k of [...keys, "customCSSMatches"]) if (k in r) delete S()[k];
-    logger.info(`已把旧版主题与 Quick CSS 搬到${target ? `站点分区 ${target}` : "(没有目标分区,已丢弃)"}`);
-    return true;
-}
 const listeners = new Set();
 const emit = () => { for (const l of [...listeners]) { try { l(); } catch { /* 忽略 */ } } };
 export const subscribeThemes = fn => { listeners.add(fn); return () => listeners.delete(fn); };

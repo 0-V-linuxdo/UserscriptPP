@@ -1,0 +1,7 @@
+{
+  "id": "grok",
+  "name": "Grok Reference (Userscript++)",
+  "namespace": "userscript-pp:grok:reference",
+  "description": "Userscript++ 的 Grok 参考适配,只作开发模板,不发布",
+  "version": "0.1.0"
+}

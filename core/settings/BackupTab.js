@@ -1,4 +1,5 @@
 // Backup 页:导出整份设置(含全部站点分区)、从文件导入(整份替换,先确认)
+import { SCRIPT_NAME } from "../env.js";
 import { h, useState } from "../ui/react.js";
 import { Button, Row, Switch } from "../ui/components.js";
 import { confirmDialog } from "../ui/modal.js";
@@ -13,7 +14,7 @@ export async function runImport() {
     const s = parsed.summary;
     const ok = await confirmDialog({
         title: "Import settings?",
-        body: `This replaces all current Userscript++ settings with the file's: ${s.plugins} plugins (${s.enabled} enabled), ${s.themes} themes in ${s.sites} site${s.sites === 1 ? "" : "s"}${s.exportedAt ? `, exported ${s.exportedAt.slice(0, 10)}` : ""}.`,
+        body: `This replaces all current ${SCRIPT_NAME} settings with the file's: ${s.plugins} plugins (${s.enabled} enabled), ${s.themes} themes in ${s.sites} site${s.sites === 1 ? "" : "s"}${s.exportedAt ? `, exported ${s.exportedAt.slice(0, 10)}` : ""}.`,
         confirmText: "Import", danger: true,
     });
     if (!ok) return false;
@@ -27,7 +28,7 @@ export function BackupTab() {
     const [secrets, setSecrets] = useState(false);
     return h("div", { className: "uspp-page", "data-uspp-page": "backup" },
         h("div", { className: "uspp-section" },
-            h(Row, { title: "Export settings", description: "Saves all Userscript++ settings, for every site, to a JSON file." },
+            h(Row, { title: "Export settings", description: `Saves all ${SCRIPT_NAME} settings, for every site, to a JSON file.` },
                 h(Button, { onClick: () => downloadJson(exportSettings({ includeSensitive: secrets }), backupFilename()) }, "Export")),
             h(Row, { title: "Include sensitive values", description: "Plugin settings marked sensitive (such as keys) are left out unless this is on." },
                 h(Switch, { checked: secrets, label: "Include sensitive values", onChange: setSecrets }))),

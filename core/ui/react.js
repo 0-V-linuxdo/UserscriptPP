@@ -1,5 +1,6 @@
 // 渲染器:当前站点提供了自己的 React 时用站点的(界面可以混用站点原生组件),否则用内置的 Preact(兼容层)
 import * as Compat from "preact/compat";
+import { diag } from "../lib/diag.js";
 import { getSite } from "../lib/sites.js";
 
 const bundled = Object.freeze({
@@ -36,7 +37,7 @@ export const usingSiteRenderer = () => !!getRenderer()?.site;
 
 /** 站点原生组件(站点 components 里提供的);当前不是站点渲染器或没有时为 null */
 export function siteComponent(name) {
-    if (!usingSiteRenderer()) return null;
+    if (!usingSiteRenderer() || diag.noSiteComponents) return null;
     const c = getSite().components;
     try { return (typeof c === "function" ? c(name) : c?.[name]) ?? null; } catch { return null; }
 }

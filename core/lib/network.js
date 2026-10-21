@@ -67,8 +67,11 @@ function wrapXhr() {
             for (const s of reqSubs) if (test(s.matcher, info.url, info.method)) call(s.handler, { ...info, body, type: "xhr" });
             if (resSubs.size) this.addEventListener("load", () => {
                 for (const s of resSubs) if (test(s.matcher, info.url, info.method)) {
-                    const text = () => Promise.resolve(this.responseType === "" || this.responseType === "text" ? this.responseText : "");
-                    call(s.handler, { ...info, status: this.status, type: "xhr", text, json: () => text().then(JSON.parse), clone: () => null, onChunk: cb => text().then(t => cb(t, true)) });
+                    // responseType 为 json 时 responseText 不可读,直接取 response
+                    const rt = this.responseType;
+                    const text = () => Promise.resolve(rt === "" || rt === "text" ? this.responseText : rt === "json" ? JSON.stringify(this.response) : "");
+                    const json = () => (rt === "json" ? Promise.resolve(this.response) : text().then(JSON.parse));
+                    call(s.handler, { ...info, status: this.status, type: "xhr", text, json, clone: () => null, onChunk: cb => text().then(t => cb(t, true)) });
                 }
             });
         }

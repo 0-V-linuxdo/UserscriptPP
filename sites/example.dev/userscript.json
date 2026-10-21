@@ -1,0 +1,7 @@
+{
+  "id": "example",
+  "name": "Userscript++ Example",
+  "namespace": "userscript-pp:example:template",
+  "description": "Userscript++ 最小站点模板",
+  "version": "0.1.0"
+}

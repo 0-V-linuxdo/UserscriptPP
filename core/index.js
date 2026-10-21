@@ -1,8 +1,9 @@
-// Userscript++ 入口:站点无关的核心 + 按当前网址选出的站点适配
-import { W, VERSION, BUILD_TYPE, isChromium } from "./env.js";
+// 站点脚本的入口:一份站点无关的核心 + 本脚本带的站点适配。同一页面上可以有多条基于框架的脚本,各自独立
+import { W, VERSION, BUILD_TYPE, IS_DEV, isChromium, SCRIPT_ID, SCRIPT_NAME, GLOBAL_NAME, INSTANCE_KEY, INSTANCE_EXPR, API_VERSION } from "./env.js";
 import builtinSites from "uspp:sites";
 import builtinPlugins from "uspp:plugins";
 import { Logger } from "./lib/logger.js";
+import { diag, diagOn, trace, diagReport, setDiagExtra, DIAG_KEY } from "./lib/diag.js";
 import * as utils from "./lib/utils.js";
 import { makeLazy, proxyLazy } from "./lib/lazy.js";
 import { Settings, PlainSettings, SettingsStore, loadSync, loadAsync, installUnloadSave, installCrossTabSync } from "./lib/settings.js";
@@ -73,13 +74,14 @@ function openSettings(opts = {}) {
 
 /** 页面空闲时本系统自身产生的 DOM 变更数(真实页面验收用:应为 0) */
 function countIdleMutations(ms = 8000) {
-    const ours = n => n && n.nodeType === 1 && (/^USPP-/.test(n.tagName) || [...n.attributes].some(a => a.name.startsWith("data-uspp")) || [...n.classList].some(c => c.startsWith("uspp-")) || !!n.querySelector?.("[data-uspp],[class*='uspp-'],uspp-root"));
+    // 只统计本脚本的节点(名字在构建时带上了脚本 ID)
+    const ours = n => n && n.nodeType === 1 && (n.tagName.toLowerCase().startsWith("uspp-") || [...n.attributes].some(a => a.name.startsWith("data-uspp")) || [...n.classList].some(c => c.startsWith("uspp-")) || !!n.querySelector?.("[data-uspp],[class*='uspp-'],uspp-root"));
     return new Promise(resolve => {
         let count = 0;
         const samples = [];
         const mo = new MutationObserver(list => {
             for (const m of list) {
-                const hit = [...m.addedNodes, ...m.removedNodes].some(ours) || (m.type === "attributes" && (ours(m.target) || m.attributeName?.includes("uspp")));
+                const hit = [...m.addedNodes, ...m.removedNodes].some(ours) || (m.type === "attributes" && (ours(m.target) || m.attributeName?.startsWith("data-uspp")));
                 if (hit) { count++; if (samples.length < 10) samples.push(m.target?.nodeName); }
             }
         });
@@ -109,11 +111,11 @@ function installAliases(api) {
 }
 const siteNamesWith = name => Sites.getSites().filter(s => s.api && name in s.api).map(s => s.name).join("、");
 
-/** settingsHost.patches 记在核心 Settings 插件名下,补丁里的 $self 指向 UserscriptPP.site.settingsHost */
+/** settingsHost.patches 记在核心 Settings 插件名下,补丁里的 $self 指向本实例的 site.settingsHost */
 function registerHostPatches() {
     const host = Sites.getSite().settingsHost;
     (host?.patches || []).forEach((patch, i) => {
-        try { T.addPatch(patch, "Settings", { key: `Settings#host${i}`, self: "UserscriptPP.site.settingsHost" }); } catch (e) { logger.error(`登记站点设置入口的第 ${i} 条补丁失败`, e); }
+        try { T.addPatch(patch, "Settings", { key: `Settings#host${i}`, self: `${INSTANCE_EXPR}.site.settingsHost` }); } catch (e) { logger.error(`登记站点设置入口的第 ${i} 条补丁失败`, e); }
     });
 }
 
@@ -135,6 +137,8 @@ function waitSiteReady(site, cb) {
     }
     if (typeof r.module === "function") {
         offs.push(F.waitFor(r.module, () => setTimeout(fire, 0)));
+        // TURBOPACK 被别的脚本接管、又没取到运行时:模块等不到了,不再空等到超时
+        offs.push(T.onTakeover(() => { if (!T.runtime.registry) fire(); }));
         // 注入前已执行的模块
         step("扫描模块缓存", T.rescanRuntimeCache);
     }
@@ -184,7 +188,8 @@ const materialize = (entry, api) => (typeof entry === "function" ? entry(api) : 
 function main() {
     // ---------- 守卫 ----------
     if (W.top !== W.self) return;
-    if ("UserscriptPP" in W) return;
+    // 只防同一条脚本重复运行;别的基于框架的脚本各有自己的实例,互不让位
+    if (W[INSTANCE_KEY]) { console.info(`[${SCRIPT_NAME}] 本脚本已在运行,跳过重复注入`); return; }
 
     let resolveReady;
     const onceReady = new Promise(r => { resolveReady = r; });
@@ -192,11 +197,20 @@ function main() {
 
     const api = {
         version: VERSION,
+        apiVersion: API_VERSION,
         buildType: BUILD_TYPE,
+        scriptId: SCRIPT_ID,
+        scriptName: SCRIPT_NAME,
+        // 本脚本页面上名字的前缀(类名、元素名、data- 标记都以它开头),站点适配拼名字时用
+        prefix: "uspp-",
         buildSites: BUILD_SITES.slice(),
         // 站点
         defineSite: Sites.defineSite,
-        registerSite: def => registerSiteRuntime(def),
+        // 运行时注册站点只作开发构建里的控制台调试手段
+        registerSite: def => {
+            if (!IS_DEV) { logger.warn("registerSite 只在开发构建里可用"); return false; }
+            return registerSiteRuntime(def);
+        },
         get site() { return Sites.getSite(); },
         get sites() { return Object.fromEntries(Sites.getSites().map(s => [s.id, s])); },
         isSite: Sites.isSite,
@@ -261,7 +275,7 @@ function main() {
         },
         components: { ...C, ModalCard, confirmDialog },
         icons,
-        openModal, closeModal, closeAllModals, ensureUiRoot: ensureRoot,
+        openModal, closeModal, closeAllModals, ensureUiRoot: () => (diag.noEarlyUiRoot ? trace("uiRoot.early.skipped") : ensureRoot()),
         showToast, dismissToast, ToastType, showNotice, closeNotice,
         theme: currentTheme,
         // 样式与主题(作用于当前站点分区)
@@ -283,7 +297,29 @@ function main() {
         matchesUrl, matchPattern, isChromium,
         countIdleMutations,
     };
-    Object.defineProperty(W, "UserscriptPP", { value: api, writable: false, configurable: true, enumerable: false });
+    if (IS_DEV) {
+        // 诊断(开发构建):开关见 core/lib/diag.js
+        api.diag = { key: DIAG_KEY, config: diag, report: diagReport, set: c => { W.localStorage.setItem(DIAG_KEY, JSON.stringify(c)); return "已保存,硬刷新后生效"; }, clear: () => { W.localStorage.removeItem(DIAG_KEY); return "已清除,硬刷新后生效"; } };
+        setDiagExtra(() => {
+            const rep = T.patchReport();
+            let cacheIds = null;
+            try { cacheIds = T.runtime.cache ? Object.keys(T.runtime.cache) : null; } catch { /* 忽略 */ }
+            return {
+                stats: { ...rep.stats, orphaned: rep.orphaned.length },
+                plugins: Object.values(P.plugins).map(p => `${p.name}:${p.started}`),
+                moduleCache: T.moduleCache.size,
+                runtimeCache: cacheIds ? cacheIds.length : null,
+                runtimeCacheIds: cacheIds,
+            };
+        });
+        if (diagOn) logger.warn(`诊断开关已打开:${JSON.stringify(diag)}(${DIAG_KEY})`);
+    }
+    Object.defineProperty(W, INSTANCE_KEY, { value: api, writable: false, configurable: true, enumerable: false });
+    // 控制台调试入口:挂到本脚本自己配置的名字上;已被占用时不覆盖
+    if (GLOBAL_NAME) {
+        if (GLOBAL_NAME in W) logger.warn(`全局名字 ${GLOBAL_NAME} 已被占用,未挂调试入口`);
+        else Object.defineProperty(W, GLOBAL_NAME, { value: api, writable: false, configurable: true, enumerable: false });
+    }
 
     // ---------- 同步阶段 ----------
     step("同步读取设置", loadSync);
@@ -319,13 +355,17 @@ function main() {
     // 页面接入工具:只有当前站点声明了打包器驱动才拦截
     if (site.driver === "turbopack") {
         step("登记补丁", P.registerPatches);
-        step("登记站点设置入口补丁", registerHostPatches);
-        step("安装打包器拦截", T.installInterceptor);
-        step("监视打包器", () => T.watchInstrumentation(20000));
+        if (diag.noHostPatches) trace("hostPatches.skipped");
+        else step("登记站点设置入口补丁", registerHostPatches);
+        if (diag.noTurbopack) trace("turbopack.skipped");
+        else {
+            step("安装打包器拦截", T.installInterceptor);
+            step("监视打包器", () => T.watchInstrumentation(20000));
+        }
     } else if (site.driver) {
         logger.warn(`不支持的打包器驱动:${site.driver}`);
     }
-    logger.info(`Userscript++ ${VERSION}(${BUILD_TYPE}),当前站点 ${site.id},已注册 ${Object.keys(P.plugins).length} 个插件`);
+    logger.info(`${SCRIPT_NAME} ${VERSION}(${BUILD_TYPE}),脚本 ID ${SCRIPT_ID},当前站点 ${site.id},已注册 ${Object.keys(P.plugins).length} 个插件`);
 
     // ---------- 异步阶段 ----------
     (async () => {
@@ -340,7 +380,8 @@ function main() {
 
         const onDom = () => {
             step("启动 DOMContentLoaded 插件", () => P.startAllAt(P.StartAt.DOMContentLoaded));
-            step("站点启动", () => site.start?.call(site, api));
+            if (diag.noSiteStart) trace("site.start.skipped");
+            else { trace("site.start"); step("站点启动", () => site.start?.call(site, api)); }
             waitSiteReady(site, () => onSiteReady(site));
         };
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", onDom, { once: true });
@@ -350,6 +391,7 @@ function main() {
     function onSiteReady(s) {
         if (siteReadyDone) return;
         siteReadyDone = true;
+        trace("site.ready", s.id);
         R.markSiteReady();
         if (s.driver === "turbopack") step("扫描模块缓存", T.rescanRuntimeCache);
         step("onceReady", () => resolveReady());
@@ -386,4 +428,4 @@ function main() {
     }
 }
 
-try { main(); } catch (e) { console.error("[Userscript++] 启动失败", e); }
+try { main(); } catch (e) { console.error(`[${SCRIPT_NAME}] 启动失败`, e); }

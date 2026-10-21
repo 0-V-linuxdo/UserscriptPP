@@ -2,7 +2,6 @@
 // 测试页:任意本地服务器上路径以 /uspp-example 开头的页面,页面里放一个 <div id="toolbar"></div>
 export default U => {
     let host = null;
-    let offSlot = null;
 
     /** toolbar 注入点:在页面的 #toolbar 里画按钮;内容变化时重画,找不到位置时什么都不做 */
     function renderToolbar() {
@@ -15,7 +14,7 @@ export default U => {
             const b = document.createElement("button");
             b.type = "button";
             b.className = "uspp-btn uspp-btn-sm";
-            b.dataset.usppToolbarItem = item.id;
+            b.setAttribute("data-uspp-toolbar-item", item.id);
             b.textContent = item.label ?? item.id;
             if (item.tooltip) b.title = item.tooltip;
             b.disabled = typeof item.disabled === "function" ? !!item.disabled() : !!item.disabled;
@@ -34,9 +33,8 @@ export default U => {
         ready: { element: "#toolbar", timeout: 5000 },
         slots: [{ name: "toolbar", kind: "button", context: "点击事件" }],
         start() {
-            offSlot = U.onSlotChange("toolbar", renderToolbar);
+            U.onSlotChange("toolbar", renderToolbar);
             U.waitForElement("#toolbar").then(renderToolbar);
         },
-        stop() { offSlot?.(); },
     });
 };

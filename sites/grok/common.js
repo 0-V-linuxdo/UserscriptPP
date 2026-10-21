@@ -93,7 +93,7 @@ let fiberQueryClient = null;
 
 /** 页面上的 React 根 fiber(不含框架自己的界面根):
  *  从挂载容器取(Grok 把根挂在 document 本身上),另外总是从页面里任意带 fiber 的节点向上走到根 */
-const isOwn = el => el?.nodeType === 1 && (el.tagName === "USPP-ROOT" || !!el.closest?.("uspp-root"));
+const isOwn = el => el?.nodeType === 1 && !!el.closest?.("uspp-root");
 function reactRootFibers() {
     const out = new Set();
     const els = [document, document.documentElement, document.getElementById("__next"), document.getElementById("root"), document.body, ...(document.body?.children || [])]

@@ -1,6 +1,6 @@
 // 补丁的规范化与应用(纯字符串操作,不碰页面)
 import { Logger } from "./logger.js";
-import { IS_DEV } from "../env.js";
+import { IS_DEV, INSTANCE_EXPR } from "../env.js";
 
 const logger = new Logger("Patcher", "#c4b5fd");
 
@@ -49,7 +49,8 @@ export function matchesFind(code, find) {
 
 export const describeFind = find => Array.isArray(find) ? find.map(String).join(" & ") : String(find);
 
-export const selfExpr = name => `UserscriptPP.plugins[${JSON.stringify(name)}]`;
+/** 补丁里 $self 展开成的表达式:经本脚本自己的实例找到插件对象(不用共用的全局名字) */
+export const selfExpr = name => `${INSTANCE_EXPR}.plugins[${JSON.stringify(name)}]`;
 
 function countGroups(re) {
     try { return new RegExp(re.source + "|").exec("").length - 1; } catch { return 0; }

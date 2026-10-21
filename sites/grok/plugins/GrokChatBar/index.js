@@ -34,7 +34,7 @@ function ChatBarButton({ def }) {
     const tooltip = nodeOf(def.tooltip);
     const label = def["aria-label"] ?? (typeof tooltip === "string" ? tooltip : def.id);
     const onClick = e => {
-        try { (def.onClick ?? def.onSelect)?.(e); } catch (err) { console.error("[Userscript++] 聊天栏按钮 onClick 出错", err); }
+        try { (def.onClick ?? def.onSelect)?.(e); } catch (err) { console.error(`[${U.scriptName}] 聊天栏按钮 onClick 出错`, err); }
         if (def.popover) setOpen(o => !o);
     };
     const IB = common.IconButton;

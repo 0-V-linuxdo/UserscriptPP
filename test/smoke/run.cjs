@@ -3,6 +3,10 @@ const { JSDOM } = require("jsdom");
 const fs = require("fs");
 const bundle = fs.readFileSync(process.argv[2], "utf8");
 const order = process.argv[3] || "first"; // first | foreignInner | foreignOuter
+// 构建时页面上的名字都带脚本 ID
+const ID = process.env.USPP_ID || "grok";
+const SK = `UserscriptPP:${ID}:settings`, KEY = Symbol.for(`uspp:${ID}`);
+const px = `uspp-${ID}-`, us = `uspp_${ID}_`, da = `data-uspp-${ID}`;
 const dom = new JSDOM(`<!doctype html><html><head><script nonce="abc"></script></head><body></body></html>`, { url: "https://grok.com/", runScripts: "dangerously", pretendToBeVisual: true });
 const w = dom.window;
 for (const k of ["window","document","navigator","HTMLElement","HTMLIFrameElement","Node","Element","Event","MouseEvent","KeyboardEvent","getComputedStyle","requestAnimationFrame","cancelAnimationFrame"]) { try { globalThis[k] = k==="window"?w:w[k]; } catch {} }
@@ -22,14 +26,15 @@ w.GM_removeValueChangeListener = () => { };
 w.GM_registerMenuCommand = (name, fn) => menus.push({ name, fn });
 // 薄副本在 GM 里,厚副本在 localStorage 里:应以厚副本为主
 store.set("UserscriptPPSettings", { plugins: { Settings: { enabled: false } } });
-w.localStorage.setItem("UserscriptPPSettings", JSON.stringify({ plugins: { Settings: { starredPlugins: ["Thick"], themes: [{ url: "local-thick", name: "Thick", local: true, css: "i{}", enabled: false }] }, ContextMenuAPI: {} } }));
+if (process.env.DIAG) w.localStorage.setItem(`UserscriptPP:${ID}:diag`, process.env.DIAG);
+w.localStorage.setItem(SK, JSON.stringify({ plugins: { Settings: { starredPlugins: ["Thick"], sites: { grok: { themes: [{ url: "local-thick", name: "Thick", local: true, css: "i{}", enabled: false }] } } }, ContextMenuAPI: {} } }));
 w.GM_xmlhttpRequest = o => { setTimeout(() => o.onload({ status: 200, statusText: "OK", responseText: "/** @name Online T\n @author A */ body{color:red}", responseHeaders: "", finalUrl: o.url }), 5); return { abort() { } }; };
 w.chrome = {}; w.Response = globalThis.Response;
 w.__React = require("react");
 w.__Jsx = { ...require("react/jsx-runtime") };
 w.__RDC = require("react-dom/client");
 w.__RD = require("react-dom");
-w.TURBOPACK = [];
+w.TURBOPACK = w.eval("[]"); // 页面自己的数组(页面的执行环境)
 
 // 别人的补丁器(模拟另一个用户脚本)
 function foreignWrap(f) {
@@ -38,12 +43,42 @@ function foreignWrap(f) {
     return g;
 }
 if (order === "foreignFirst") {
+    // 它第一次执行模块时拿到运行时注册表,也挂上注册表的 set:之后注册的工厂由它包装;记下每个模块被它处理的次数
+    const regVisits = w.__foreignRegVisits = {};
+    let hooked = false;
+    const hookReg = ctx => {
+        if (hooked || !ctx) return;
+        const reg = Object.getPrototypeOf(ctx).M;
+        if (!reg) return;
+        hooked = true;
+        const prev = reg.set;
+        reg.set = function (id, f) { regVisits[id] = (regVisits[id] || 0) + 1; return prev.call(this, id, typeof f === "function" ? foreignWrapReg(f) : f); };
+    };
+    const foreignWrapReg = f => { const g = function (ctx, ...a) { hookReg(ctx); return f.call(this, ctx, ...a); }; g.toString = () => String(f.toString()); return g; };
+    w.__foreignHookReg = hookReg;
     // 别人先装:访问器 + 包装 push,把每个工厂换成自己的包装
+    // 每次读取都确认值上还有自有的 push 数据属性,没有(例如被改成访问器)就当作自己还没挂上,重新挂一层;
+    // 记下每个分块被它处理的次数:本脚本在场不应让它多处理
+
     let cur = w.TURBOPACK;
-    const wrapChunk = c => { for (let i = 1; i < c.length; i++) if (typeof c[i] === "function") c[i] = foreignWrap(c[i]); };
-    const inst = v => { if (v && !v.$$f) { v.$$f = 1; if (Array.isArray(v)) v.forEach(wrapChunk); const p = v.push; v.push = function (...cs) { cs.forEach(wrapChunk); return p.apply(this, cs); }; } return v; };
+    const visits = w.__foreignVisits = {};
+    const OURS = Symbol.for(`uspp.${ID}.factory`);
+    w.__foreignSawOurs = 0;
+    const wrapChunk = c => { visits[String(c[0])] = (visits[String(c[0])] || 0) + 1; for (let i = 1; i < c.length; i++) if (typeof c[i] === "function") { if (c[i][OURS]) w.__foreignSawOurs++; const inner = foreignWrap(c[i]); const fid = c[i - 1]; const ts = inner.toString; inner.toString = () => { if (!registry.has(fid)) w.__foreignEarlyToString = (w.__foreignEarlyToString || 0) + 1; return ts(); }; c[i] = function (ctx, ...a) { hookReg(ctx); return inner.call(this, ctx, ...a); }; c[i].toString = () => String(inner.toString()); } };
+    const inst = v => {
+        if (!v) return v;
+        const d = Object.getOwnPropertyDescriptor(v, "push");
+        if (v.$$f && d && typeof d.value === "function") return v;
+        if (Array.isArray(v) && !v.$$f) v.forEach(wrapChunk);
+        v.$$f = 1;
+        const p = v.push;
+        const mine = function (...cs) { cs.forEach(wrapChunk); return p.apply(this, cs); };
+        mine.$$foreign = 1;
+        v.push = mine;
+        return v;
+    };
     inst(cur);
-    Object.defineProperty(w, "TURBOPACK", { configurable: true, get: () => cur, set: v => { cur = inst(v); } });
+    Object.defineProperty(w, "TURBOPACK", { configurable: true, get: () => inst(cur), set: v => { cur = inst(v); } });
 }
 
 w.eval(bundle);
@@ -55,6 +90,21 @@ if (order === "foreignAfter") {
     const wrapChunk = c => { for (let i = 1; i < c.length; i++) if (typeof c[i] === "function") { const inner = c[i]; const own = unwrap(inner); c[i] = function (...a) { return own.apply(this, a); }; c[i].toString = () => Function.prototype.toString.call(own); } };
     const inst = v => { if (v && !v.$$f) { v.$$f = 1; const p = v.push; v.push = function (...cs) { cs.forEach(wrapChunk); return p.apply(this, cs); }; } return v; };
     Object.defineProperty(w, "TURBOPACK", { configurable: true, get: () => inst(d.get.call(w)), set: v => d.set.call(w, inst(v)) });
+}
+
+if (order === "takeover") {
+    // 别人后装且不串联(和 Void++ 后装时看到的一样):取走现有的值,换掉它的 push,自己处理分块后直接用数组原生 push;
+    // 再把 TURBOPACK 重定义成自己的 getter,运行时设置的新值也自己收下,不交给本脚本
+    let cur = w.TURBOPACK;
+    const wrapChunk = c => { for (let i = 1; i < c.length; i++) if (typeof c[i] === "function") c[i] = foreignWrap(c[i]); };
+    const own = v => {
+        if (!v) return v;
+        const base = Array.isArray(v) ? w.Array.prototype.push : v.push;
+        v.push = function handleChunkPush(...cs) { cs.forEach(wrapChunk); return base.apply(this, cs); };
+        return v;
+    };
+    own(cur);
+    Object.defineProperty(w, "TURBOPACK", { configurable: true, get: function () { return cur; }, set: v => { cur = own(v); } });
 }
 
 // ---------- 仿 Grok 模块(源码文本决定补丁是否命中) ----------
@@ -119,9 +169,16 @@ const req = id => root.r(id);
     if (process.env.LATE) { req(20); req(13); req(14); await sleep(2500); }
     req(31); req(32); req(33);
     await sleep(400);
-    const P = w.UserscriptPP;
+    // 接管要看完宽限期(之后的分块是否仍经过本脚本)才认定;共存的几种顺序也等完,确认没有被误判成接管
+    await sleep(1500);
+    const P = w[KEY];
     const out = {};
     if (process.env.DUMP) { console.log("DUMP" + JSON.stringify(P.patches.map(p => ({ plugin: p.plugin, find: (Array.isArray(p.find) ? p.find : [p.find]).map(f => f instanceof w.RegExp ? { re: f.source } : f), rep: p.replacement.map(r => [r.match.source, r.match.flags]) })))); process.exit(0); }
+    if (process.env.DIAG) { const r = P.diag.report(); out.diag = { config: r.config, kinds: [...new Set(r.events.map(e => e[1]))].sort(), plugins: r.plugins, fallbacks: r.stats.injectionFallbacks, runtimeCache: r.runtimeCache, counters: r.counters }; }
+    out.foreignVisits = w.__foreignVisits || null;
+    out.foreignRegVisits = w.__foreignRegVisits || null;
+    out.foreignSawOurs = w.__foreignSawOurs ?? null;
+    out.foreignEarlyToString = w.__foreignEarlyToString || 0;
     out.dbgPatches = P.patches.map(p=>p.plugin+':'+String(p.rawFind)+':'+p.consumed+':'+p.checkOnly);
     const rep = P.patchReport();
     out.stats = rep.stats; out.orphaned = rep.orphaned;
@@ -130,8 +187,8 @@ const req = id => root.r(id);
     const reg = req(10);
     out.groups = reg.NAV_GROUPS; out.tabs = reg.TAB_REGISTRY.map(t => t.id);
     const dlg = req(11);
-    out.groupLabel = dlg.groupLabel("uspp");
-    const tl = dlg.tabLabel({ id: "uspp_themes_tab" }); out.tabLabel = typeof tl === "string" ? tl : "<element>";
+    out.groupLabel = dlg.groupLabel(`${us}settings`);
+    const tl = dlg.tabLabel({ id: `${us}themes_tab` }); out.tabLabel = typeof tl === "string" ? tl : "<element>";
     const { renderToStaticMarkup } = require("react-dom/server");
     const R = w.__React;
     P.addContextMenuItem("user", "u1", { label: "ProbeUser", onSelect() { } });
@@ -154,37 +211,39 @@ const req = id => root.r(id);
         const on = markup();
         out.aliasSite = P.plugins.AliasProbe.site;
         // 聊天栏在补丁被绕过时靠 Grok 导出的 ModeSelect 兜底,仿模块没有导出它,所以只在独占时检查渲染
-        out.aliasOn = [P.getSlotItems("chatBar").some(x => x.id === "AliasProbe" && x.tooltip === "AliasBtn"), ...["uspp-AliasProbe", "AliasUser1", "AliasUser2"].map(x => on.includes(x))];
+        out.aliasOn = [P.getSlotItems("chatBar").some(x => x.id === "AliasProbe" && x.tooltip === "AliasBtn"), ...[`${px}AliasProbe`, "AliasUser1", "AliasUser2"].map(x => on.includes(x))];
         out.aliasBtnRendered = on.includes("AliasBtn");
         P.stopPlugin("AliasProbe");
         const off = markup();
-        out.aliasOff = [P.getSlotItems("chatBar").some(x => x.id === "AliasProbe") || off.includes("AliasBtn"), ...["uspp-AliasProbe", "AliasUser1"].map(x => off.includes(x))];
+        out.aliasOff = [P.getSlotItems("chatBar").some(x => x.id === "AliasProbe") || off.includes("AliasBtn"), ...[`${px}AliasProbe`, "AliasUser1"].map(x => off.includes(x))];
     } catch (e) { errors.push("alias: " + e.stack); }
     out.site = P.site.id;
     out.buildSites = P.buildSites;
     // 渲染设置页到真实 DOM
     const host = w.document.createElement("div"); w.document.body.appendChild(host);
     const rr = w.__RDC.createRoot(host);
-    for (const t of reg.TAB_REGISTRY.filter(t => t.id.startsWith("uspp"))) {
+    for (const t of reg.TAB_REGISTRY.filter(t => t.id.startsWith(us))) {
         try { w.__RD.flushSync(() => rr.render(R.createElement(t.component))); out["page:" + t.id] = host.textContent.slice(0, 250); } catch (e) { errors.push("page " + t.id + ": " + e.stack); }
     }
     // 设置对话框里打开插件配置
     try {
-        w.__RD.flushSync(() => rr.render(R.createElement(reg.TAB_REGISTRY.find(t => t.id === "uspp_plugins_tab").component)));
+        const pluginsTab = reg.TAB_REGISTRY.find(t => t.id === `${us}plugins_tab`);
+        if (!pluginsTab) throw "skip";
+        w.__RD.flushSync(() => rr.render(R.createElement(pluginsTab.component)));
         const allTab = [...host.querySelectorAll("button[role=tab]")].find(b => b.textContent === "All");
         w.__RD.flushSync(() => allTab.click());
         out.allPage = host.textContent.slice(0, 300);
         const cfg = host.querySelector('[aria-label="config"]');
         w.__RD.flushSync(() => cfg.click());
         await sleep(50);
-        out.modal = w.document.querySelector("uspp-root")?.textContent.slice(0, 300);
-    } catch (e) { errors.push("plugin modal: " + e.stack); }
+        out.modal = w.document.querySelector(`${px}root`)?.textContent.slice(0, 300);
+    } catch (e) { if (e !== "skip" || !(order === "takeover" || P.patchReport().stats.yielded)) errors.push("plugin modal: " + (e.stack || e)); }
     // Quick CSS 与本地主题
     P.setQuickCss({ css: "body{outline:3px solid red}", enabled: true });
     await sleep(10);
-    out.quickCss = w.document.querySelector('uspp-styles style[data-uspp="quick-css"]')?.textContent;
+    out.quickCss = w.document.querySelector(`${px}styles style[${da}="quick-css"]`)?.textContent;
     const th = P.addLocalTheme("Mine", "a{color:blue}"); P.enableTheme(th.url);
-    out.themeStyle = !!w.document.querySelector(`uspp-styles style[data-uspp="theme:${th.url}"]`);
+    out.themeStyle = !!w.document.querySelector(`${px}styles style[${da}="theme:${th.url}"]`);
     try { await P.addTheme("http://x/a.css"); } catch (e) { out.badUrl = e.message; }
     try { await P.addTheme("https://x/a.txt"); } catch (e) { out.badExt = e.message; }
     out.online = await P.addTheme("https://x.example/my-theme.css?v=1").then(t => t.name + "/" + t.enabled, e => "ERR " + e.message);
@@ -228,7 +287,7 @@ const req = id => root.r(id);
     backup.settings.plugins.Settings.sites.grok.customCSS = "imported{}";
     backup.settings.plugins.Settings.sites.grok.customCSSEnabled = true;
     await P.importSettings(backup.settings);
-    out.importedCss = w.document.querySelector('uspp-styles style[data-uspp="quick-css"]')?.textContent;
+    out.importedCss = w.document.querySelector(`${px}styles style[${da}="quick-css"]`)?.textContent;
     out.backup = { exportedToken: "token" in (exp.settings.plugins.SecretProbe || {}), token: P.PlainSettings.plugins.SecretProbe.token, color: P.PlainSettings.plugins.SecretProbe.color, format: exp.format };
     // 查询客户端不在模块导出里,只在 React 树里的 provider 上(和当前 Grok 一样)
     // 和当前 Grok 一样:根挂在 document 本身上(不在 body 下),body 下带 React 容器的只有别的根(框架自己的界面根等)
@@ -236,10 +295,19 @@ const req = id => root.r(id);
     const Prov = ({ client, children }) => children;
     w.__RD.flushSync(() => w.__RDC.createRoot(qHost).render(w.__React.createElement(Prov, { client: req(33).makeQueryClient() }, w.__React.createElement("span", null, "q"))));
     for (const k of Object.keys(qHost)) if (k.startsWith("__reactContainer$")) { w.document[k] = qHost[k]; delete qHost[k]; }
-    out.bodyHasOwnRoot = !!w.document.querySelector("body > uspp-root");
+    out.bodyHasOwnRoot = !!w.document.querySelector(`body > ${px}root`);
     const subs = P.common.getSubscriptions();
     out.subs = { tier: subs.highestTier, name: subs.highestTierName, subscribed: subs.isSubscribed, x: subs.hasXSubscription, active: subs.active.length };
-    out.writable = (() => { try { w.UserscriptPP = 1; } catch { } return w.UserscriptPP === P; })();
+    if (order === "takeover" || P.patchReport().stats.yielded) {
+        // 站点自己的设置入口不可用:脚本管理器菜单打开框架面板
+        P.closeAllModals();
+        menus[0]?.fn();
+        await sleep(1200);
+        out.stillForeign = (() => { const d = Object.getOwnPropertyDescriptor(w, "TURBOPACK"); return !!d.get && String(d.get).includes("return cur") && w.TURBOPACK.push.name === "handleChunkPush"; })();
+        out.menuPanel = !!w.document.querySelector(`${px}root`)?.textContent.includes("Plugins");
+    }
+    out.writable = (() => { try { w[KEY] = 1; } catch { } return w[KEY] === P; })();
+    out.globals = { legacy: "UserscriptPP" in w, debug: w[`uspp_${ID.replace(/[^a-z0-9]/g, "_")}`] === P };
     console.log(JSON.stringify(out, null, 1));
     console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
     console.log("LOGS:\n" + logs.filter(l => !l.startsWith("[debug]")).join("\n"));
