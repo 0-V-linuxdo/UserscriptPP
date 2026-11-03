@@ -9,6 +9,7 @@ import {
 } from "../lib/themes.js";
 import { siteLabel } from "./site-label.js";
 import { EditIcon, CopyIcon, TrashIcon } from "../ui/icons.js";
+import { BaseCard } from "./BaseCard.js";
 
 function OnlineThemeModal({ onClose }) {
     const [url, setUrl] = useState("");
@@ -69,21 +70,26 @@ function ThemeCard({ t }) {
         const ok = await copyToClipboard(t.url);
         showToast(ok ? "Copied URL" : "Couldn't copy URL", ok ? ToastType.SUCCESS : ToastType.ERROR);
     };
-    return h("div", { className: "uspp-card", "data-uspp-theme": t.url },
-        h("div", { className: "uspp-card-head" },
-            h("span", { className: "uspp-card-name" }, t.name),
-            h("span", { className: "uspp-badge" }, t.local ? "Local" : "Online"),
-            h("div", { className: "uspp-card-controls" },
-                t.local
-                    ? h(IconButton, { icon: EditIcon, label: "Edit", onClick: () => openModal(({ onClose }) => h(LocalThemeModal, { onClose, theme: t }), { modalKey: "uspp-local-theme" }) })
-                    : h(IconButton, { icon: CopyIcon, label: "Copy URL", onClick: copy }),
-                h(IconButton, { icon: TrashIcon, label: "Delete", onClick: remove }),
-                h(Switch, { checked: t.enabled, label: t.name, onChange: v => (v ? enableTheme : disableTheme)(t.url) }))),
-        t.description && h("div", { className: "uspp-card-desc" }, t.description),
-        h("div", { className: "uspp-card-authors" }, t.author || ""),
-        h("label", { className: "uspp-sites uspp-muted uspp-small" },
-            h("input", { type: "checkbox", checked: !!t.allSites, onChange: e => setThemeAllSites(t.url, e.target.checked), "data-uspp-theme-all": t.url }),
-            "Use on all sites"));
+    const btn = (key, icon, label, onClick) => h(IconButton, { key, icon, label, onClick, size: 3.5, className: "uspp-card-btn" });
+    return h(BaseCard, {
+        attrs: { "data-uspp-theme": t.url },
+        name: t.name,
+        badges: h("span", { className: "uspp-badge" }, t.local ? "Local" : "Online"),
+        description: t.description,
+        controls: [
+            t.local
+                ? btn("edit", EditIcon, "Edit", () => openModal(({ onClose }) => h(LocalThemeModal, { onClose, theme: t }), { modalKey: "uspp-local-theme" }))
+                : btn("copy", CopyIcon, "Copy URL", copy),
+            btn("del", TrashIcon, "Delete", remove),
+            h(Switch, { key: "switch", checked: t.enabled, label: t.name, onChange: v => (v ? enableTheme : disableTheme)(t.url) }),
+        ],
+        footer: [
+            h("span", { key: "a", className: "uspp-card-authors" }, t.author || "\u00A0"),
+            h("label", { key: "s", className: "uspp-sites uspp-muted uspp-small" },
+                h("input", { type: "checkbox", checked: !!t.allSites, onChange: e => setThemeAllSites(t.url, e.target.checked), "data-uspp-theme-all": t.url }),
+                "Use on all sites"),
+        ],
+    });
 }
 
 export function ThemesTab() {

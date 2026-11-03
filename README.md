@@ -100,6 +100,8 @@
    };
    ```
 
+   **效果预览**:插件可写 `preview` 字段,设置面板里插件卡片会多一个眼睛按钮,点开后在插件对话框顶部显示预览。可写图片地址 / data: URI、内联 SVG 文本、`{ src, alt, caption }`、前后对比 `{ before, after, caption }`,或实时演示组件 `({ plugin, settings, enabled }) => 节点`(也可写 `{ component, caption }`;改设置时跟着重画),多项写成数组会左右翻页。没写时按 `slots` 自动列出插件会加的按钮和菜单项;写 `preview: false` 不显示。网站的 CSP 可能拦外链图片,优先用 data: URI、内联 SVG 或演示组件。例子见 `sites/example.dev/plugins/ExampleHello`。
+
    插件名在一条脚本里必须唯一(重名时构建报错)。插件停止时它加的注入点内容、事件订阅、设置监听都会自动撤掉。
 
 6. **构建站点脚本**:`node <框架目录>/scripts/build.mjs --site-dir sites/<id> --out dist`,产出 `<文件名>.user.js` / `.meta.js`(发布构建)和 `<文件名>.dev.user.js` / `.dev.meta.js`(开发构建,名字后带 " (dev)")。`--site-dir` 可写多次,把多个站点打进同一条脚本(配置取第一个站点目录的)。

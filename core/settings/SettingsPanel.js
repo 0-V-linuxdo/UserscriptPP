@@ -14,10 +14,11 @@ function SettingsPanel({ tab, onClose }) {
     const page = pageByKey(cur);
     return h(ModalCard, { title: SCRIPT_NAME, subtitle: `${VERSION} · ${siteLabel()}`, onClose, width: 860 },
         h("div", { className: "uspp-panel", "data-uspp-panel": "" },
-            h("div", { className: "uspp-tabs", role: "tablist" }, SETTINGS_PAGES.map(p => h("button", {
-                key: p.key, type: "button", role: "tab", className: "uspp-chip", "aria-selected": String(p.key === cur), "data-uspp-panel-tab": p.key, onClick: () => setCur(p.key),
-            }, p.label))),
-            h(page.component, { key: page.key })));
+            // 页面导航放左侧边栏(同站点设置弹窗的布局),内容区顶部只留插件页自己的一排分类标签
+            h("nav", { className: "uspp-panel-nav", role: "tablist", "aria-orientation": "vertical" }, SETTINGS_PAGES.map(p => h("button", {
+                key: p.key, type: "button", role: "tab", className: "uspp-panel-nav-item", "aria-selected": String(p.key === cur), "data-uspp-panel-tab": p.key, title: p.label, onClick: () => setCur(p.key),
+            }, p.icon && h(p.icon, { size: 4 }), h("span", null, p.label)))),
+            h("div", { className: "uspp-panel-content" }, h(page.component, { key: page.key }))));
 }
 
 /** 打开框架面板;plugin 给出时在面板之上再打开该插件的配置 */

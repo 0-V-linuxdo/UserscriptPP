@@ -5,6 +5,7 @@ import { Switch, Select, Input, Button } from "../ui/components.js";
 import { OptionType, getVisibleSettings } from "../lib/plugins.js";
 import { Settings, SettingsStore, PlainSettings } from "../lib/settings.js";
 import { humanizeKey } from "../lib/utils.js";
+import { PluginPreview, hasPreview } from "./PluginPreview.js";
 
 function usePluginSettings(name) {
     const force = useForceUpdate();
@@ -102,7 +103,8 @@ export function PluginModal({ plugin, onClose, onRestartChange }) {
         footer: visible.length ? h(Button, { variant: "danger", onClick: reset }, "Reset") : null,
     },
     h("div", { className: "uspp-muted uspp-small", style: { marginBottom: 8 } }, "Authors: ", (plugin.authors || []).join(", ") || "Unknown"),
+    h(ErrorBoundary, { fallback: null }, h(PluginPreview, { plugin })),
     visible.length
         ? visible.map(([key, s]) => h(ErrorBoundary, { key, fallback: null }, h(SettingControl, { plugin, keyName: key, setting: s, onRestartChange })))
-        : h("div", { className: "uspp-empty" }, "No configurable settings."));
+        : !hasPreview(plugin) && h("div", { className: "uspp-empty" }, "No configurable settings."));
 }

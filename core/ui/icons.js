@@ -33,4 +33,6 @@ export const CheckIcon = svg(["M20 6L9 17l-5-5"]);
 export const ReloadIcon = svg(["M21 12a9 9 0 1 1-3-6.7", "M21 3v6h-6"]);
 export const ChevronRightIcon = svg(["M9 6l6 6-6 6"]);
 export const LogoIcon = svg(["M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M12 8v8", "M8 12h8"]);
+export const CircleAlertIcon = svg(["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 8v4", "M12 16h.01"]);
+export const EyeIcon = svg(["M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"]);
 export const ArchiveIcon = svg(["M3 4h18v4H3z", "M5 8v12h14V8", "M10 12h4"]);

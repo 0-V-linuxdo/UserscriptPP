@@ -9,9 +9,12 @@ import { subscribe, dispatch, Events } from "../lib/events.js";
 import { openModal, confirmDialog } from "../ui/modal.js";
 import { isChromium, SCRIPT_NAME } from "../env.js";
 import {
-    PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, LockIcon, WarningIcon, ChromiumIcon, WrenchIcon,
+    PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, CircleAlertIcon, WarningIcon, ChromiumIcon, WrenchIcon, EyeIcon,
 } from "../ui/icons.js";
 import { PluginModal } from "./PluginModal.js";
+import { hasPreview } from "./PluginPreview.js";
+import { BaseCard } from "./BaseCard.js";
+import { classes } from "../lib/utils.js";
 import { getSlotItems, onSlotChange, slotValue } from "../lib/slots.js";
 import { pluginSiteLabel } from "./site-label.js";
 import { sys, listSetting } from "./shared.js";
@@ -21,6 +24,8 @@ const TAGS = [
     ["notifications", "Notifications"], ["appearance", "Appearance"], ["declutter", "Declutter"], ["privacy", "Privacy"], ["developer", "Developer"],
 ];
 const DAY = 86400000;
+// 脚本只含一个站点时不在卡片上标所属站点(规格 4.3)
+const MULTI_SITE = (typeof __USPP_SITES__ !== "undefined" ? __USPP_SITES__ : []).length > 1;
 
 function visiblePlugins() {
     return Object.values(plugins).filter(p => !p.hidden && !(p.chromiumOnly && !isChromium()));
@@ -74,10 +79,11 @@ function useReloadTracker() {
 function Badges({ p }) {
     const out = [];
     const failed = !p.required && isPluginEnabled(p.name) && !p.started;
-    if (p.required) out.push(h(Tooltip, { key: "req", content: `This plugin is required for ${SCRIPT_NAME} to work` }, h("span", { className: "uspp-icon-badge" }, h(LockIcon, { size: 3.5 }))));
-    if (failed) out.push(h(Tooltip, { key: "fail", content: "This plugin failed to start" }, h("span", { className: "uspp-icon-badge uspp-warn" }, h(WarningIcon, { size: 3.5 }))));
-    if (p.chromiumOnly) out.push(h(Tooltip, { key: "chr", content: "Chromium only" }, h("span", { className: "uspp-icon-badge" }, h(ChromiumIcon, { size: 3.5 }))));
-    if (p.dev) out.push(h(Tooltip, { key: "dev", content: "Development build only" }, h("span", { className: "uspp-icon-badge" }, h(WrenchIcon, { size: 3.5 }))));
+    const icon = (key, tip, Icon, cls) => h(Tooltip, { key, content: tip }, h("span", { className: classes("uspp-icon-badge", cls) }, h(Icon, { size: 3.5 })));
+    if (failed) out.push(icon("fail", "This plugin failed to start", WarningIcon, "uspp-warn"));
+    if (p.required) out.push(icon("req", `This plugin is required for ${SCRIPT_NAME} to work`, CircleAlertIcon));
+    if (p.dev) out.push(icon("dev", "Development build only", WrenchIcon));
+    if (p.chromiumOnly) out.push(icon("chr", "Chromium only", ChromiumIcon));
     const seen = sys().knownPlugins?.[p.name];
     if (seen && Date.now() - seen < 2 * DAY) out.push(h("span", { key: "new", className: "uspp-badge" }, "New"));
     return out;
@@ -89,6 +95,7 @@ function PluginCard({ p, tracker }) {
     const pinned = listSetting("pinnedPlugins").includes(p.name);
     const failed = !p.required && enabled && !p.started;
     const hasSettings = getVisibleSettings(p).length > 0;
+    const showPreview = hasPreview(p);
     const Icon = p.icon || PlugIcon;
     const toggleStar = () => {
         const list = listSetting("starredPlugins").filter(n => n !== p.name);
@@ -103,23 +110,30 @@ function PluginCard({ p, tracker }) {
         dispatch(Events.PLUGIN_PIN, { name: p.name, pinned: !pinned });
     };
     const openConfig = () => openModal(({ onClose }) => h(PluginModal, { plugin: p, onClose, onRestartChange: tracker.onSettingRestart }), { modalKey: `uspp-plugin-${p.name}` });
-    return h("div", { className: "uspp-card", "data-failed": String(failed), "data-uspp-plugin": p.name },
-        h("div", { className: "uspp-card-head" },
-            h("span", { className: "uspp-icon-badge" }, h(ErrorBoundary, { fallback: h(PlugIcon, { size: 4.5 }) }, h(Icon, { size: 4.5 }))),
-            h("span", { className: "uspp-card-name" }, p.name),
-            h(Badges, { p }),
-            h("span", { className: "uspp-site-badge", "data-uspp-plugin-site": p.site ?? "*" }, pluginSiteLabel(p)),
-            h("div", { className: "uspp-card-controls" },
-                h(PluginActions, { p }),
-                h(IconButton, { icon: starred ? StarFillIcon : StarIcon, label: starred ? "Unstar" : "Star", active: starred, onClick: toggleStar }),
-                !p.required && h(IconButton, { icon: pinned ? PinFillIcon : PinIcon, label: pinned ? "Unpin" : "Pin", active: pinned, onClick: togglePin }),
-                hasSettings && h(IconButton, { icon: SlidersIcon, label: "config", onClick: openConfig }),
-                h(Switch, {
-                    checked: enabled, disabled: p.required || isEnabledAsDependency(p.name), label: p.name,
-                    onChange: () => { togglePlugin(p.name); tracker.onToggled(p); },
-                }))),
-        h("div", { className: "uspp-card-desc" }, p.description),
-        h("div", { className: "uspp-card-authors" }, (p.authors || []).join(", ")));
+    const btn = (key, icon, label, onClick, active) => h(IconButton, { key, icon, label, onClick, active, size: 3.5, className: "uspp-card-btn" });
+    return h(BaseCard, {
+        attrs: { "data-failed": String(failed), "data-required": String(!!p.required), "data-uspp-plugin": p.name },
+        name: p.name,
+        icon: h(ErrorBoundary, { fallback: h(PlugIcon, { size: 3.5 }) }, h(Icon, { size: 3.5 })),
+        badges: h(Badges, { p }),
+        description: p.description,
+        controls: [
+            h(PluginActions, { key: "actions", p }),
+            btn("star", starred ? StarFillIcon : StarIcon, starred ? "Unstar" : "Star", toggleStar, starred),
+            !p.required && btn("pin", pinned ? PinFillIcon : PinIcon, pinned ? "Unpin" : "Pin", togglePin, pinned),
+            hasSettings && h(Tooltip, { key: "cfg", content: "config" }, btn(null, SlidersIcon, "config", openConfig)),
+            h(Switch, {
+                key: "switch", checked: enabled, disabled: p.required || isEnabledAsDependency(p.name), label: p.name,
+                onChange: () => { togglePlugin(p.name); tracker.onToggled(p); },
+            }),
+        ],
+        footer: [
+            h("span", { key: "a", className: "uspp-card-authors" }, (p.authors || []).join(", ") || "\u00A0"),
+            MULTI_SITE && h("span", { key: "s", className: "uspp-site-badge", "data-uspp-plugin-site": p.site ?? "*" }, pluginSiteLabel(p)),
+            showPreview && h("button", { key: "p", type: "button", className: "uspp-card-preview", "aria-label": "Preview", title: "Preview", onClick: openConfig },
+                h(EyeIcon, { size: 3.5 }), "Preview"),
+        ],
+    });
 }
 
 /** 注入点 settings.pluginActions:卡片上的额外按钮;定义里写了 plugin 时只出现在那个插件上 */
