@@ -42,6 +42,7 @@ import { PluginModal } from "./settings/PluginModal.js";
 import { checkPatches, describeResult, crawlChunks, extractChunkPaths } from "./lib/reporter.js";
 import { trackFinders, failedFinders } from "./lib/finder-log.js";
 import { ownByCurrent } from "./lib/scope.js";
+import { installBridge, setPluginResolver, setSelfTarget } from "./lib/bridge.js";
 import { patchMethod, isPatched } from "./lib/patcher.js";
 import { rewriteRequest, rewriteResponse, onWebSocket, onEventSource, makeResponse } from "./lib/network.js";
 import { dataStoreFor, exportData, importData, pruneData } from "./lib/datastore.js";
@@ -156,7 +157,7 @@ const siteNamesWith = name => Sites.getSites().filter(s => s.api && name in s.ap
 function registerHostPatches() {
     const host = Sites.getSite().settingsHost;
     (host?.patches || []).forEach((patch, i) => {
-        try { T.addPatch(patch, "Settings", { key: `Settings#host${i}`, self: `${INSTANCE_EXPR}.site.settingsHost` }); } catch (e) { logger.error(`登记站点设置入口的第 ${i} 条补丁失败`, e); }
+        try { T.addPatch(patch, "Settings", { key: `Settings#host${i}`, self: { key: "settingsHost", expr: `${INSTANCE_EXPR}.site.settingsHost` } }); } catch (e) { logger.error(`登记站点设置入口的第 ${i} 条补丁失败`, e); }
     });
 }
 
@@ -496,7 +497,10 @@ function main() {
         if (diagOn) logger.warn(`诊断开关已打开:${JSON.stringify(diag)}(${DIAG_KEY})`);
     }
     installNamespaces(api);
-    Object.defineProperty(W, INSTANCE_KEY, { value: api, writable: false, configurable: true, enumerable: false });
+    // 页面上只挂页面桥(补丁用的门面和编译槽),完整接口 api 不出闭包
+    setPluginResolver(name => P.plugins[name] ?? null);
+    setSelfTarget("settingsHost", () => Sites.getSite().settingsHost ?? null);
+    installBridge(W, api);
     // 控制台调试入口:挂到本脚本自己配置的名字上;已被占用时不覆盖
     if (GLOBAL_NAME) {
         if (GLOBAL_NAME in W) logger.warn(`全局名字 ${GLOBAL_NAME} 已被占用,未挂调试入口`);

@@ -10,6 +10,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// 测试脚本要从页面里拿完整接口:只在测试里打开(构建出的页面桥上多一个 api);正常构建页面上只有页面桥,见"页面桥"那条测试
+process.env.USPP_TEST_EXPOSE = "1";
 const build = (...args) => execFileSync(process.execPath, [join(root, "scripts/build.mjs"), ...args], { encoding: "utf8" });
 const tmp = p => mkdtempSync(join(tmpdir(), p));
 // 示例站点脚本(开发构建带 registerSite 等控制台工具)
@@ -71,8 +73,10 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.loaded, { starred: ["Thick"], thick: true });
         assert.deepEqual(data.menus, ["Grok Reference (Userscript++) settings", "Grok Reference (Userscript++): search…", "Grok Reference (Userscript++): reload in safe mode"]);
         assert.deepEqual(data.crossTab, { pinned: ["RemotePin"], css: "local{}", notified: 1 });
+        assert.deepEqual(data.crossTabDelete, { deleted: true, notified: ["deleted"], keptDirty: 1, pluginKept: true });
         assert.deepEqual(data.backup, { exportedToken: false, token: "s3cret", color: "blue", format: "userscript-pp-settings" });
         assert.equal(data.writable, true);
+        assert.deepEqual(data.bridge, { keys: ["plugins", "scriptId", "site", "version"], noApi: [], selfMethod: "function", selfStable: true, selfHidden: ["undefined", "undefined", "undefined"], hostSelf: "function", frozen: true });
         assert.deepEqual(data.globals, { legacy: false, debug: true });
         assert.equal(data.site, "grok");
         assert.deepEqual(data.plugins, ["Settings:true", "GrokChatBar:true", "GrokMenus:true", "GrokMessages:true"]);
@@ -240,8 +244,8 @@ test("诊断开关(开发构建):分步关掉启动环节并记录动作", () =>
     assert.match(text, /诊断开关已打开/);
 });
 
-function runSite(file, url, id = "example") {
-    const text = execFileSync(process.execPath, [join(root, "test/smoke/site.cjs"), file, url], { encoding: "utf8", maxBuffer: 64 << 20, env: { ...process.env, USPP_ID: id } });
+function runSite(file, url, id = "example", env = {}) {
+    const text = execFileSync(process.execPath, [join(root, "test/smoke/site.cjs"), file, url], { encoding: "utf8", maxBuffer: 64 << 20, env: { ...process.env, USPP_ID: id, ...env } });
     const data = JSON.parse(text.slice(text.indexOf("{\n"), text.indexOf("ERRORS:")));
     const errors = text.slice(text.indexOf("ERRORS:") + 7, text.indexOf("LOGS:")).trim();
     const logs = text.slice(text.indexOf("LOGS:") + 5).trim();
@@ -290,6 +294,8 @@ test("插件作用域、方法补丁器、网络改写、设置校验、插件�
     assert.deepEqual(data.scope.after, { ...data.scope.frozen });
     assert.ok(data.scope.before.observe >= 1 && data.scope.before.interval >= 1 && data.scope.before.listen === 1 && data.scope.before.direct >= 1, JSON.stringify(data.scope.before));
     assert.equal(data.scope.after.timeout, 0);
+    // 提前撤销的和到点执行过的从清理列表里删掉:50 个还没到点的定时器还在,撤销过的监听不在
+    assert.deepEqual(data.scopeShrink, { afterManual: 50, afterTimers: 0, kept: 2, late: 1 });
     assert.equal(data.scope.after.registered, 1);
     assert.equal(data.scope.after.aborted, true);
     assert.deepEqual(data.patcher, { r1: "[hi BOB]!", r2: "3p:[hi AMY]!", r3: "3p:hi joe", keptTheirs: true, restored: true, p1: 2, nameKept: true, str: true, safe: "ok", h1: "patched", h2: "h", origUntouched: true });
@@ -635,6 +641,16 @@ test("同一页面两条基于框架的站点脚本互不影响", () => {
     assert.deepEqual([data.ui.aToast, data.ui.bToast, data.ui.aPanel, data.ui.bPanel], ["fromA", "fromB", true, false]);
     assert.deepEqual(data.stopA, { a: false, b: true });
     assert.deepEqual(data.idle, [0, 0]);
+});
+
+test("页面桥:正常构建的页面上拿不到完整接口和设置,只有补丁用的门面", () => {
+    const out = tmp("uspp-bridge-");
+    execFileSync(process.execPath, [join(root, "scripts/build.mjs"), "--site", "grok", "--out", out], { encoding: "utf8", env: { ...process.env, USPP_TEST_EXPOSE: "" } });
+    for (const file of ["grok.user.js", "grok.dev.user.js"]) {
+        const { data, errors } = runSite(join(out, file), "https://grok.com/", "grok", { BRIDGE_ONLY: "1" });
+        assert.deepEqual(data, { keys: ["plugins", "scriptId", "site", "version"], api: false, fetchExternal: false, settings: false, plugins: "object" }, file);
+        assert.equal(errors, "none");
+    }
 });
 
 test("单站版 --site grok(示例源码按需构建)", () => {

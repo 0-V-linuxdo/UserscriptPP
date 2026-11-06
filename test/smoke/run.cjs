@@ -160,7 +160,7 @@ const req = id => root.r(id);
     await sleep(400);
     // 接管要看完宽限期(之后的分块是否仍经过本脚本)才认定;共存的几种顺序也等完,确认没有被误判成接管
     await sleep(1500);
-    const P = w[KEY];
+    const P = w[KEY].api;
     const out = {};
     if (process.env.DUMP) { console.log("DUMP" + JSON.stringify(P.patches.map(p => ({ plugin: p.plugin, find: (Array.isArray(p.find) ? p.find : [p.find]).map(f => f instanceof w.RegExp ? { re: f.source } : f), rep: p.replacement.map(r => [r.match.source, r.match.flags]) })))); process.exit(0); }
     if (process.env.DIAG) { const r = P.diag.report(); out.diag = { config: r.config, kinds: [...new Set(r.events.map(e => e[1]))].sort(), plugins: r.plugins, fallbacks: r.stats.injectionFallbacks, runtimeCache: r.runtimeCache, counters: r.counters }; }
@@ -290,15 +290,24 @@ const req = id => root.r(id);
     out.loaded = { starred: P.PlainSettings.plugins.Settings.starredPlugins, thick: P.getThemes().some(t => t.name === "Thick") };
     out.menus = menus.map(m => m.name);
     // 多标签页:别的标签页保存的设置合并进来;本页未落盘的改动不被覆盖
+    P.Settings.plugins.Settings.sites.grok.zapMe = "x";
     await sleep(300);
     const remote = JSON.parse(JSON.stringify(P.PlainSettings));
     remote.plugins.Settings.pinnedPlugins = ["RemotePin"];
     remote.plugins.Settings.sites.grok.customCSS = "remote{}";
+    // 别的标签页删了一个键(要跟着删);整份插件条目缺了(不删,可能是没装这个插件的旧版本)
+    delete remote.plugins.Settings.sites.grok.zapMe;
+    delete remote.plugins.GrokMessages;
     P.setQuickCss({ css: "local{}" });
+    P.Settings.plugins.Settings.sites.grok.keepMe = 1; // 本页刚加、还没落盘:不被删
+    const deletions = [];
+    P.SettingsStore.addPrefixChangeListener("plugins.Settings.sites.grok.zapMe", v => deletions.push(v === undefined ? "deleted" : v));
     const seen = [];
     P.SettingsStore.addPrefixChangeListener("plugins.Settings.pinnedPlugins", v => seen.push(v));
     valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, remote, true));
     out.crossTab = { pinned: P.PlainSettings.plugins.Settings.pinnedPlugins, css: P.getQuickCss().css, notified: seen.length };
+    const g = P.PlainSettings.plugins.Settings.sites.grok;
+    out.crossTabDelete = { deleted: !("zapMe" in g), notified: deletions, keptDirty: g.keepMe, pluginKept: "GrokMessages" in P.PlainSettings.plugins };
     // 备份:敏感设置默认不导出,导入时文件里为空则保留本机的
     P.registerPlugin(P.definePlugin({ name: "SecretProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ token: { type: P.OptionType.STRING, default: "", sensitive: true }, color: { type: P.OptionType.STRING, default: "" } }) }));
     P.Settings.plugins.SecretProbe.token = "s3cret"; P.Settings.plugins.SecretProbe.color = "red";
@@ -395,7 +404,18 @@ const req = id => root.r(id);
         out.injectUndone = "InjectedIcon" in req(21);
         out.apiKeys = Object.keys(P);
     }
-    out.writable = (() => { try { w[KEY] = 1; } catch { } return w[KEY] === P; })();
+    out.writable = (() => { try { w[KEY] = 1; } catch { } return w[KEY]?.api === P; })();
+    // 页面桥:只有补丁里引用过的 $self.<名字>,拿不到插件定义上的别的东西,也没有框架接口
+    const B = w[KEY], menusSelf = B.plugins.GrokMenus;
+    out.bridge = {
+        keys: Object.keys(B).sort(),
+        noApi: ["fetchExternal", "Settings", "PlainSettings", "importSettings", "DataStore"].filter(k => k in B),
+        selfMethod: typeof menusSelf.renderUserItems,
+        selfStable: menusSelf.renderUserItems === menusSelf.renderUserItems,
+        selfHidden: [menusSelf.settings, menusSelf.start, menusSelf.patches].map(v => typeof v),
+        hostSelf: typeof B.site.settingsHost.navGroups,
+        frozen: (() => { try { B.plugins.GrokMenus.x = 1; B.extra = 1; } catch { } return B.plugins.GrokMenus.x === undefined && B.extra === undefined; })(),
+    };
     out.globals = { legacy: "UserscriptPP" in w, debug: w[`uspp_${ID.replace(/[^a-z0-9]/g, "_")}`] === P };
     console.log(JSON.stringify(out, null, 1));
     console.log("ERRORS:", errors.length ? errors.join("\n") : "none");

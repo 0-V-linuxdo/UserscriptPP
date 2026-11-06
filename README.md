@@ -59,8 +59,8 @@
    | `match` / `excludeMatch` | 缺省取站点定义的 `matches` / `excludeMatches` |
    | `grants` / `connect` / `require` / `resource` | 在框架必需的授权之外追加。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机 |
    | `themeHosts` | 在线主题允许从哪些主机取 CSS(写进 `@connect`);不在列表里的地址,Themes 页会说明原因。脚手架生成的配置里带了几个常见主机 |
-   | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉 |
-   | `globalInProduction` | 为 `true` 时发布构建也挂调试名 |
+   | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉。`window[Symbol.for("uspp:<ID>")]` 上只有页面桥(补丁里 `$self` 用的门面),不是完整接口 |
+   | `globalInProduction` | 为 `true` 时发布构建也挂调试名。调试名上是完整接口,网站自己的脚本也能拿到,发布版不建议打开 |
 
 3. **写站点定义** `sites/<id>/index.js`:
 

@@ -56,7 +56,7 @@ const live = gm => gm.menus.filter(m => !m.removed).map(m => m.name);
 (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(400);
-    const A = w[Symbol.for(`uspp:${idA}`)], B = w[Symbol.for(`uspp:${idB}`)];
+    const A = w[Symbol.for(`uspp:${idA}`)]?.api, B = w[Symbol.for(`uspp:${idB}`)]?.api;
     const out = {};
     out.started = [A?.scriptId, B?.scriptId, A !== B];
     out.globals = { legacy: "UserscriptPP" in w, a: w[`uspp_${idA}`] === A, b: w[`uspp_${idB}`] === B };

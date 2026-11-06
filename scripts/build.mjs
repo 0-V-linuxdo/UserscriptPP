@@ -304,6 +304,8 @@ async function bundle(sites, cfg, dev) {
             __USPP_SITES__: JSON.stringify(sites.map(x => x.id)),
             __USPP_SCRIPT__: JSON.stringify(script),
             __USPP_CONNECT__: JSON.stringify(connectHosts(cfg, dev)),
+            // 只给冒烟测试:把完整接口挂到页面桥上,方便测试脚本从页面里拿;正常构建不要设
+            __USPP_TEST_EXPOSE__: String(process.env.USPP_TEST_EXPOSE === "1"),
         },
         plugins: [scopeNames(cfg.id, [join(root, "core"), join(root, "plugins"), ...sites.map(x => x.dir)]), virtualModules(sites, generic)],
         logLevel: "warning",

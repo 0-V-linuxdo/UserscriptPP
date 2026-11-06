@@ -246,7 +246,8 @@ export function compile(id, code, kind = "turbopack") {
     // 1. 带 nonce 的内联 script(运行在页面上下文,兼容 CSP)
     try {
         if (ns && document.documentElement) {
-            const bag = ns[COMPILED] || (Object.defineProperty(ns, COMPILED, { value: Object.create(null) }), ns[COMPILED]);
+            const bag = ns[COMPILED]; // 页面桥上预先建好的编译槽
+            if (!bag) throw new Error("页面桥上没有编译槽");
             const key = "m" + String(id).replace(/[^\w]/g, "_");
             delete bag[key];
             const el = document.createElement("script");

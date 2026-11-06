@@ -29,7 +29,15 @@ const liveMenus = () => menus.filter(m => !m.removed).map(m => m.name);
 (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(300);
-    const P = w[KEY];
+    if (process.env.BRIDGE_ONLY) {
+        // 正常构建(没设 USPP_TEST_EXPOSE):页面上只有页面桥
+        const B = w[KEY];
+        console.log(JSON.stringify({ keys: Object.keys(B).sort(), api: "api" in B, fetchExternal: "fetchExternal" in B, settings: "Settings" in B, plugins: typeof B.plugins.Settings }, null, 1));
+        console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
+        console.log("LOGS:");
+        process.exit(0);
+    }
+    const P = w[KEY].api;
     const out = {};
     const d = Object.getOwnPropertyDescriptor(w, "TURBOPACK");
     out.turbopackTouched = !!d;

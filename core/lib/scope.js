@@ -23,20 +23,22 @@ export function runAs(name, fn) {
 }
 
 function createScope(name) {
-    const list = [];
+    // Set 保持插入顺序;提前撤销或定时器到点后,条目连同闭包从这里删掉,长开的标签页不会越积越多
+    const list = new Set();
     const ac = typeof AbortController === "function" ? new AbortController() : null;
     let disposed = false;
     const register = fn => {
         if (typeof fn !== "function") return fn;
         if (disposed) { try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); } return fn; }
-        list.push(fn);
+        list.add(fn);
         return fn;
     };
+    const unregister = fn => list.delete(fn);
     // 包一层:返回的撤销函数既登记到作用域,也可以提前手动调用(只执行一次)
     const own = off => {
         if (typeof off !== "function") return off;
         let done = false;
-        const once = () => { if (done) return; done = true; off(); };
+        const once = () => { if (done) return; done = true; list.delete(once); off(); };
         register(once);
         return once;
     };
@@ -44,6 +46,7 @@ function createScope(name) {
         plugin: name,
         get signal() { return ac?.signal; },
         get disposed() { return disposed; },
+        get pending() { return list.size; },
         register,
         observe: (selector, opts) => own(observe(selector, opts)),
         onRouteChange: fn => own(onRouteChange(fn)),
@@ -79,11 +82,13 @@ function createScope(name) {
         if (disposed) return;
         disposed = true;
         try { ac?.abort(); } catch { /* 忽略 */ }
-        for (const fn of list.splice(0).reverse()) {
+        const fns = [...list].reverse();
+        list.clear();
+        for (const fn of fns) {
             try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); }
         }
     };
-    return { ctx, dispose, register };
+    return { ctx, dispose, register, unregister };
 }
 
 /** 插件启动时取一个新作用域(上一次的已在停止时释放) */
@@ -110,7 +115,7 @@ export function ownByCurrent(off) {
     const s = scopes.get(current);
     if (!s) return off;
     let done = false;
-    const once = () => { if (done) return; done = true; off(); };
+    const once = () => { if (done) return; done = true; s.unregister(once); off(); };
     s.register(once);
     return once;
 }

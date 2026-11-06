@@ -115,7 +115,7 @@ if (process.env.DUMP) {
         w.eval(RUNTIME_INLINE);
         w.eval(CHUNK_LATE);
         await sleep(300);
-        const U = w[KEY];
+        const U = w[KEY].api;
         const rep = U.patchReport();
         console.log(JSON.stringify({
             inline: w.__inline?.INLINE_ENTRY ?? null, late: w.__late?.INLINE_LATE ?? null,
@@ -131,7 +131,7 @@ if (process.env.DUMP) {
     w.eval(CHUNK2);
     w.eval(CHUNK3);
     await sleep(300);
-    const U = w[KEY];
+    const U = w[KEY].api;
     // 懒加载:按源码找到打开它的模块,加载分块并执行入口;loadChunk + importModule 按 ID 取
     // FOREIGN 时没挂接、没有运行时,跳过(分块加载会退回插 <script>,jsdom 里不会加载)
     const lazy = { before: !!U.findByProps("LAZY_WIDGET") };

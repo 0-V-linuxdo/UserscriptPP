@@ -38,7 +38,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     w.open = u => { opened.push(String(u).replace(/[?&]t=\d+/, "")); return null; };
     w.eval(bundle);
     await sleep(400);
-    const U = w[KEY];
+    const U = w[KEY].api;
     const doc = w.document;
     const rootText = () => doc.querySelector(`${px}root`)?.textContent ?? "";
     const out = { requests: requests.slice() };

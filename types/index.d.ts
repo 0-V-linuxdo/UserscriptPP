@@ -16,7 +16,7 @@ export type ReplaceFn = (match: string, ...groups: any[]) => string;
 export interface PatchReplacement {
     /** 正则里可以写 \i 代表一个标识符 */
     match: Pattern;
-    /** 字符串里 $self 展开成本插件对象 */
+    /** 字符串里 $self 展开成本插件对象在页面上的门面:只能用补丁源码里写出的 $self.<名字>(方法已绑定到插件对象) */
     replace: string | ReplaceFn;
     predicate?: () => boolean;
     noWarn?: boolean;
@@ -132,6 +132,8 @@ export interface PluginCtx {
     readonly plugin: string;
     readonly signal: AbortSignal;
     readonly disposed: boolean;
+    /** 目前还登记着的清理条数;提前撤销的、到点执行过的定时器不算 */
+    readonly pending: number;
     readonly data: PluginData;
     register(fn: () => void): () => void;
     observe(selector: string, opts: { added?(el: Element): void; removed?(el: Element): void; root?: Element }): Unsubscribe;

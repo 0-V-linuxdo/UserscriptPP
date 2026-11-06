@@ -54,7 +54,7 @@ const px = `uspp-${ID}-`;
     w.eval(bundle);
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(300);
-    const U = w[KEY];
+    const U = w[KEY].api;
     const out = { mode: MODE, safe: U.isSafeMode() };
     const doc = w.document;
     const rootText = () => doc.querySelector(`${px}root`)?.textContent ?? "";
@@ -109,6 +109,25 @@ const px = `uspp-${ID}-`;
         add("probe"); add("probe-direct"); doc.dispatchEvent(new w.Event("probe-ev")); U.dispatch("siteReady", {});
         await sleep(500);
         out.scope = { before, after: { ...hits }, frozen };
+    }
+
+    // ---------- 1.1b 作用域清理列表不只增不减(第 33 条) ----------
+    {
+        let ctxRef = null;
+        U.registerPlugin(U.definePlugin({ name: "ScopeLeak", description: "x", authors: ["t"], start(ctx) { ctxRef = ctx; } }));
+        U.startPlugin("ScopeLeak");
+        const base = ctxRef.pending;
+        for (let i = 0; i < 50; i++) { ctxRef.setTimeout(() => { }, 0); ctxRef.observe(".leak", { added() { } })(); ctxRef.listen(doc, "leak", () => { })(); }
+        const afterManual = ctxRef.pending - base;
+        await sleep(30);
+        let late = 0;
+        ctxRef.setTimeout(() => late++, 0);
+        const off = ctxRef.setInterval(() => { }, 1000);
+        const kept = ctxRef.pending - base;
+        off();
+        await sleep(30);
+        out.scopeShrink = { afterManual, afterTimers: ctxRef.pending - base, kept, late };
+        U.stopPlugin("ScopeLeak");
     }
 
     // ---------- 1.2 方法补丁器 ----------

@@ -35,7 +35,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         req.on("error", () => o.onerror?.());
     };
     w.eval(bundle);
-    const U = w[KEY];
+    const U = w[KEY].api;
     const doc = w.document;
     const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await sleep(50); } return false; };
     const counter = () => doc.querySelector(`[data-${px}tsx-counter]`)?.textContent ?? null;

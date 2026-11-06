@@ -292,6 +292,17 @@ export function applyRemote(data) {
             changedPaths.push(full);
             emitChange(full, b);
         }
+        // 别的标签页删掉的键:本地有、收到的没有、本地又没改过的,也删掉;不然本页下次保存会把它写回去。
+        // 顶层和 plugins.<名> 这两层不删:那是整个插件的条目,由各页自己的过期清理负责(另一页可能是没装这个插件的旧版本)
+        if (path === "" || path === "plugins") return;
+        for (const k of Object.keys(target)) {
+            if (Object.prototype.hasOwnProperty.call(src, k)) continue;
+            const full = path ? `${path}.${k}` : k;
+            if (underDirty(full)) continue;
+            delete target[k];
+            changedPaths.push(full);
+            emitChange(full, undefined);
+        }
     };
     walk(PlainSettings, data, "");
     if (changedPaths.length) {

@@ -1,6 +1,7 @@
 // 补丁的规范化与应用(纯字符串操作,不碰页面)
 import { Logger } from "./logger.js";
 import { IS_DEV, INSTANCE_EXPR } from "../env.js";
+import { allowSelfRefs, pluginSelfKey } from "./bridge.js";
 
 const logger = new Logger("Patcher", "#c4b5fd");
 
@@ -49,14 +50,16 @@ export function matchesFind(code, find) {
 
 export const describeFind = find => Array.isArray(find) ? find.map(String).join(" & ") : String(find);
 
-/** 补丁里 $self 展开成的表达式:经本脚本自己的实例找到插件对象(不用共用的全局名字) */
+/** 补丁里 $self 展开成的表达式:经本脚本自己的页面桥找到插件的门面(不用共用的全局名字,也不给整个插件定义) */
 export const selfExpr = name => `${INSTANCE_EXPR}.plugins[${JSON.stringify(name)}]`;
+/** $self 的指向:key 是页面桥上的门面键,expr 是展开成的表达式 */
+export const pluginSelf = name => ({ key: pluginSelfKey(name), expr: selfExpr(name) });
 
 function countGroups(re) {
     try { return new RegExp(re.source + "|").exec("").length - 1; } catch { return 0; }
 }
 
-export function canonicalizeReplacement(r, pluginName, self = selfExpr(pluginName)) {
+export function canonicalizeReplacement(r, pluginName, self = pluginSelf(pluginName)) {
     const match = canonicalizeRegex(r.match);
     let replace = r.replace;
     if (typeof replace === "string") {
@@ -65,10 +68,12 @@ export function canonicalizeReplacement(r, pluginName, self = selfExpr(pluginNam
             const max = refs.length ? Math.max(...refs) : 0;
             if (max > countGroups(match)) logger.warn(`${pluginName}: 替换引用了 $${max},但 match 只有 ${countGroups(match)} 个捕获组`, String(match));
         }
-        replace = replace.replaceAll("$self", self);
+        allowSelfRefs(self.key, replace);
+        replace = replace.replaceAll("$self", self.expr);
     } else if (typeof replace === "function") {
         const fn = replace;
-        replace = (...args) => String(fn(...args)).replaceAll("$self", self);
+        // 函数替换在打补丁时才知道引用了哪些 $self.<名字>:先放行再展开,编译出来的代码运行时就能拿到
+        replace = (...args) => { const out = String(fn(...args)); allowSelfRefs(self.key, out); return out.replaceAll("$self", self.expr); };
     }
     return { ...r, match, replace };
 }
