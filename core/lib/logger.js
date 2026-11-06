@@ -1,10 +1,11 @@
-import { IS_DEV, SCRIPT_NAME } from "../env.js";
+/* global __USPP_DEV__ */
+import { SCRIPT_NAME } from "../env.js";
 
 const COLORS = { log: "#a78bfa", info: "#38bdf8", warn: "#f59e0b", error: "#ef4444", debug: "#9ca3af" };
 
 // 发布构建里也能打开 debug(设置里的"输出调试日志");最近的 warn / error 留给诊断信息
-let debugOn = IS_DEV;
-export function setDebugLogs(on) { debugOn = IS_DEV || !!on; }
+let debugOn = __USPP_DEV__;
+export function setDebugLogs(on) { debugOn = __USPP_DEV__ || !!on; }
 const recent = [];
 export const recentLogs = () => recent.slice();
 const brief = a => { try { return a instanceof Error ? `${a.name}: ${a.message}` : typeof a === "string" ? a : JSON.stringify(a)?.slice(0, 300) ?? String(a); } catch { return String(a); } };

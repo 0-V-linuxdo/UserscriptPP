@@ -6,7 +6,7 @@ import { Logger } from "./logger.js";
 import { trace } from "./diag.js";
 import { wrapFactory, runtime, chunkPaths, rescanRuntimeCache, seenModule, yieldDriver } from "./turbopack.js";
 
-const logger = new Logger("Webpack", "#86efac");
+const logger = /* @__PURE__ */ new Logger("Webpack", "#86efac");
 
 /** 第一次执行模块时从第三个参数(__webpack_require__)上取工厂表 .m 和模块缓存 .c */
 function captureRequire(req) {

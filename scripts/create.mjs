@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // 脚手架:生成站点目录或插件目录的起步文件(已有的文件不覆盖)。
 //
 //   node scripts/create.mjs site <id> [--dir <目录>] [--name <显示名>] [--match <网址模式>]... [--driver none|webpack|turbopack] [--global <分块全局名>] [--ts]

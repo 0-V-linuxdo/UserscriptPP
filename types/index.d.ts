@@ -296,7 +296,10 @@ export declare class Logger {
 export interface ChangelogEntry { version: string; date: string | null; notes: string[] }
 
 export interface UsppApi {
+    /** 站点脚本自己的版本(userscript.json 的 version) */
     version: string;
+    /** 构建这条脚本所用的 Userscript++ 框架版本 */
+    frameworkVersion: string;
     apiVersion: number;
     buildType: "development" | "production";
     scriptId: string;

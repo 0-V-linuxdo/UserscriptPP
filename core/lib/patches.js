@@ -1,6 +1,7 @@
 // 补丁的规范化与应用(纯字符串操作,不碰页面)
+/* global __USPP_DEV__ */
 import { Logger } from "./logger.js";
-import { IS_DEV, INSTANCE_EXPR } from "../env.js";
+import { INSTANCE_EXPR } from "../env.js";
 import { allowSelfRefs, pluginSelfKey } from "./bridge.js";
 
 const logger = new Logger("Patcher", "#c4b5fd");
@@ -63,7 +64,7 @@ export function canonicalizeReplacement(r, pluginName, self = pluginSelf(pluginN
     const match = canonicalizeRegex(r.match);
     let replace = r.replace;
     if (typeof replace === "string") {
-        if (IS_DEV && match instanceof RegExp) {
+        if (__USPP_DEV__ && match instanceof RegExp) {
             const refs = [...replace.matchAll(/\$(\d+)/g)].map(m => +m[1]);
             const max = refs.length ? Math.max(...refs) : 0;
             if (max > countGroups(match)) logger.warn(`${pluginName}: 替换引用了 $${max},但 match 只有 ${countGroups(match)} 个捕获组`, String(match));
@@ -195,10 +196,10 @@ export function applyPatches(moduleId, source, patchList, stats) {
         if (skipMembers && code === source && pf.members.has(p)) continue;
         if (!runPredicate(p.predicate, p.plugin)) continue;
         let hit;
-        const t0 = IS_DEV ? now() : 0;
+        const t0 = __USPP_DEV__ ? now() : 0;
         try { hit = matchesFind(code, p.find); } catch (e) { logger.error(`${p.plugin}: find 出错`, e); continue; }
         // 开发构建:累计每条补丁 find 的耗时(所有模块加起来),健康报告里列出最慢的几条
-        if (IS_DEV) p.ms = (p.ms || 0) + (now() - t0);
+        if (__USPP_DEV__) p.ms = (p.ms || 0) + (now() - t0);
         if (!hit) continue;
         if (!p.all) p.consumed = true;
 

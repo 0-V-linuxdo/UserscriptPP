@@ -3,7 +3,7 @@
 import { GM, SCRIPT_ID } from "../env.js";
 import { Logger } from "./logger.js";
 
-const logger = new Logger("Hot", "#fcd34d");
+const logger = /* @__PURE__ */ new Logger("Hot", "#fcd34d");
 
 /** onPlugin(ev) 替换插件;onFull(reason) 需要整体更新 */
 export function startHotClient(url, { onPlugin, onFull }) {

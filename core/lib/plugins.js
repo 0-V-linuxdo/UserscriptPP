@@ -1,5 +1,6 @@
 // 插件模型:定义、启用判定、启动/停止、开关、运行时注册
-import { isChromium, IS_DEV } from "../env.js";
+/* global __USPP_DEV__ */
+import { isChromium } from "../env.js";
 import { Logger } from "./logger.js";
 import { diag, trace } from "./diag.js";
 import { Settings, PlainSettings, SettingsStore, setDefaultResolver } from "./settings.js";
@@ -123,7 +124,7 @@ function bindMethods(p) {
 export function addPlugin(def, { runtime = false } = {}) {
     if (!def || !def.name) throw new Error("插件必须有 name");
     if (plugins[def.name]) return false;
-    if (def.dev && !IS_DEV) return false;
+    if (def.dev && !__USPP_DEV__) return false;
     // site:"*" 为通用插件;运行时注册且没写时属于当前站点
     if (def.site == null) def.site = runtime ? getSite().id : "*";
     if (def.site !== "*" && def.site !== getSite().id) {
@@ -151,7 +152,7 @@ export function registerPatches() {
         if (!pluginHasPatches(p) || runtimeRegistered.has(p.name)) continue;
         if (!siteHasDriver()) { patchesNotApplicable.add(p.name); continue; }
         const enabled = isPluginEnabled(p.name) && (!isSafeMode() || p.required);
-        if (!enabled && !IS_DEV) continue;
+        if (!enabled && !__USPP_DEV__) continue;
         p.patches.forEach((patch, i) => {
             try {
                 addPatch(patch, p.name, { checkOnly: !enabled, key: `${p.name}#${i}` });

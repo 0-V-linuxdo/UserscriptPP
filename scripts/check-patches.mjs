@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // 补丁检查器(命令行)。不用浏览器,在 CI 里也能跑:
 //
 //   node scripts/check-patches.mjs --site <id> | --site-dir <目录>          只做静态检查(正则、反向引用、捕获组……)
@@ -40,6 +41,8 @@ if (!siteDirs.length) {
 
 // 核心模块在页面里运行;命令行里补上它们在加载时会读的几个全局名字
 globalThis.window ??= globalThis;
+// 构建时由 esbuild 替换成常量;命令行直接引入核心模块时按开发构建处理(补丁检查要用开发版的告警)
+globalThis.__USPP_DEV__ ??= true;
 const { lintPatch, checkPatches, describeResult, crawlChunks, extractChunkPaths, factoriesFromChunk } = await import(pathToFileURL(join(root, "core/lib/reporter.js")).href);
 
 // ---------- 读取站点和插件定义 ----------

@@ -1,5 +1,6 @@
 // 站点脚本的入口:一份站点无关的核心 + 本脚本带的站点适配。同一页面上可以有多条基于框架的脚本,各自独立
-import { W, VERSION, BUILD_TYPE, IS_DEV, HOT_URL, isChromium, SCRIPT_ID, SCRIPT_NAME, GLOBAL_NAME, INSTANCE_KEY, INSTANCE_EXPR, API_VERSION } from "./env.js";
+/* global __USPP_DEV__, __USPP_WEBPACK__ */
+import { W, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, HOT_URL, isChromium, SCRIPT_ID, SCRIPT_NAME, GLOBAL_NAME, INSTANCE_KEY, INSTANCE_EXPR, API_VERSION } from "./env.js";
 import builtinSites from "uspp:sites";
 import builtinPlugins from "uspp:plugins";
 import { Logger } from "./lib/logger.js";
@@ -349,6 +350,7 @@ function main() {
 
     const api = {
         version: VERSION,
+        frameworkVersion: FRAMEWORK_VERSION,
         apiVersion: API_VERSION,
         buildType: BUILD_TYPE,
         scriptId: SCRIPT_ID,
@@ -360,7 +362,7 @@ function main() {
         defineSite: Sites.defineSite,
         // 运行时注册站点只作开发构建里的控制台调试手段
         registerSite: def => {
-            if (!IS_DEV) { logger.warn("registerSite 只在开发构建里可用"); return false; }
+            if (!__USPP_DEV__) { logger.warn("registerSite 只在开发构建里可用"); return false; }
             return registerSiteRuntime(def);
         },
         get site() { return Sites.getSite(); },
@@ -471,7 +473,7 @@ function main() {
         matchesUrl, matchPattern, isChromium,
         countIdleMutations,
     };
-    if (IS_DEV) {
+    if (__USPP_DEV__) {
         // 补丁 / 查找器检查器(开发构建);命令行版本见 scripts/check-patches.mjs
         api.checkPatches = checkPatchesInPage;
         api.failedFinders = failedFinders;
@@ -556,7 +558,8 @@ function main() {
         step("登记补丁", P.registerPatches);
         if (diag.noHostPatches) trace("hostPatches.skipped");
         else step("登记站点设置入口补丁", registerHostPatches);
-        step("安装打包器拦截", () => installWebpack(site.driverOptions || {}));
+        // 构建里没有 webpack 站点时 __USPP_WEBPACK__ 为 false,webpack 驱动整个不打进脚本
+        if (__USPP_WEBPACK__) step("安装打包器拦截", () => installWebpack(site.driverOptions || {}));
     } else if (site.driver) {
         logger.warn(`不支持的打包器驱动:${site.driver}`);
     }
@@ -573,7 +576,7 @@ function main() {
         if (keepData) step("清理旧插件数据", () => { pruneData(keepData); });
         step("快捷键", installKeybinds);
         // --hot 构建:连本机构建服务,改一个插件时原地替换
-        if (IS_DEV && HOT_URL) step("热重载", () => startHotClient(HOT_URL, {
+        if (__USPP_DEV__ && HOT_URL) step("热重载", () => startHotClient(HOT_URL, {
             onPlugin(ev) {
                 if (!P.plugins[ev.name]) { notify({ title: "Hot reload", body: `${ev.name} is new: reinstall the dev build to load it.`, type: "info" }); return; }
                 const def = evalPluginChunk(ev.code, api);
@@ -624,7 +627,7 @@ function main() {
             // 共存时部分模块不经本系统的包装执行,定期并入运行时缓存
             setInterval(() => { try { T.syncRuntimeCache(); } catch { /* 忽略 */ } }, 2000);
             setTimeout(() => step("补丁健康报告", T.logHealthReport), 5000);
-            if (IS_DEV) setTimeout(() => step("查找器报告", () => {
+            if (__USPP_DEV__) setTimeout(() => step("查找器报告", () => {
                 const bad = failedFinders();
                 if (bad.length) logger.debug(`${bad.length} 个查找器解析为空(站点改版时最先失效):`, bad.map(f => f.finder));
             }), 8000);

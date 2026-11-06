@@ -194,6 +194,19 @@ Grok 示例里保留旧名(只在带它的构建里有):`common`、`addChatBarBu
 
 下面说的是照常挂接(`coexistActive`)时的行为:和其他同样改写 Grok 模块的用户脚本一起装时,部分模块会先被对方包装。这时补丁记为 `bypassed`,`onPatchBypassed` 通知对应插件,Grok 适配改用渲染钩子兜底,功能不变。共存时 `patchReport()` 预期 `errors 0`、`runtimeFallbacks 0`、`orphaned []`,`Settings`、`GrokChatBar`、`GrokMenus` 列在 `injectionFallbacks` 里。没有打包器驱动的站点上声明了 `patches` 的插件照常启动,补丁列在 `patchReport().notApplicable`。
 
+## 框架版本与引用
+
+框架按语义化版本发布并打 tag(`v0.1.0` 这样),每个版本的改动见 [`CHANGELOG.md`](CHANGELOG.md)。站点仓库把框架作为开发依赖、锁定到某个 tag,升级时改 tag 即可:
+
+```sh
+npm install --save-dev github:0-V-linuxdo/UserscriptPP#v0.1.0
+npx uspp-build --site-dir sites/<id> --out dist          # = node node_modules/userscript-pp/scripts/build.mjs …
+npx uspp-create plugin <Name> --site sites/<id>
+npx uspp-check-patches --site-dir sites/<id>
+```
+
+构建出的脚本里 `U.frameworkVersion` 是所用的框架版本,`U.version` 是站点脚本自己的版本(`userscript.json` 的 `version`),诊断信息里两个都有。
+
 ## 构建与测试
 
 ```sh

@@ -1,8 +1,29 @@
 {
   "name": "userscript-pp",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "用户脚本开发框架:核心、构建工具、脚手架和补丁检查器",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0-V-linuxdo/UserscriptPP.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "uspp-build": "scripts/build.mjs",
+    "uspp-create": "scripts/create.mjs",
+    "uspp-check-patches": "scripts/check-patches.mjs"
+  },
+  "files": [
+    "core",
+    "plugins",
+    "scripts",
+    "types",
+    "CHANGELOG.md",
+    "README.md"
+  ],
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch --dev",
@@ -11,10 +32,12 @@
     "check:patches": "node scripts/check-patches.mjs",
     "test": "node --test test/smoke.test.mjs"
   },
-  "devDependencies": {
+  "dependencies": {
     "esbuild": "0.25.10",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
     "jsdom": "^24.1.3",
-    "preact": "^10.29.8",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

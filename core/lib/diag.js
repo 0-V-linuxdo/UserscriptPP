@@ -18,11 +18,12 @@
 //   noHostPatches  不登记站点设置入口的补丁
 //   noSiteStart    不运行站点的 start()
 //   disablePlugins 不启动这些插件(含必需插件),例如 ["MyPlugin"]
-import { IS_DEV, SCRIPT_ID, W } from "../env.js";
+/* global __USPP_DEV__ */
+import { SCRIPT_ID, W } from "../env.js";
 
 export const DIAG_KEY = `UserscriptPP:${SCRIPT_ID}:diag`;
 let cfg = {};
-if (IS_DEV) {
+if (__USPP_DEV__) {
     try { cfg = JSON.parse(W.localStorage.getItem(DIAG_KEY) || "{}") || {}; } catch { cfg = {}; }
 }
 export const diag = Object.freeze({ ...cfg, disablePlugins: Array.isArray(cfg.disablePlugins) ? cfg.disablePlugins.slice() : [] });

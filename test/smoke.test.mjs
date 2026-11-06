@@ -720,6 +720,7 @@ test("产物里的 void 只作为运算符出现", () => {
 // ---------- 核心模块单元测试(直接导入,不经构建) ----------
 async function importCore(rel) {
     globalThis.window ??= globalThis;
+    globalThis.__USPP_DEV__ ??= true;
     return import(new URL(`../${rel}`, import.meta.url).href);
 }
 
@@ -774,4 +775,23 @@ test("@connect 只写用到的主机", () => {
     assert.deepEqual(head({}), []);
     assert.deepEqual(head({ updateBase: "https://dl.example/s/", themeHosts: ["raw.githubusercontent.com"], connect: ["api.example"] }), ["dl.example", "raw.githubusercontent.com", "api.example"]);
     assert.deepEqual(head({ connect: ["*"] }), ["*"]);
+});
+
+test("框架版本:package.json、CHANGELOG 和产物里的框架版本一致", () => {
+    const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    assert.match(version, /^\d+\.\d+\.\d+(-[\w.]+)?$/);
+    const first = readFileSync(join(root, "CHANGELOG.md"), "utf8").match(/^## (\S+)/m)?.[1];
+    assert.equal(first, version, "CHANGELOG.md 最上面的版本应和 package.json 一致");
+    const text = readFileSync(join(exOut, "example.user.js"), "utf8");
+    assert.ok(text.includes(JSON.stringify(version)), "产物里应带框架版本");
+});
+
+test("发布构建不含开发专用代码;没有 webpack 站点时不打进 webpack 驱动", () => {
+    const prod = readFileSync(join(exOut, "example.user.js"), "utf8");
+    const dev = readFileSync(join(exOut, "example.dev.user.js"), "utf8");
+    for (const mod of ["core/lib/reporter.js", "core/lib/finder-log.js", "core/lib/hot.js"]) {
+        assert.ok(!prod.includes(`// ${mod}\n`), `发布构建不应包含 ${mod}`);
+    }
+    assert.ok(dev.includes("// core/lib/reporter.js\n"), "开发构建应包含补丁检查器");
+    assert.ok(!prod.includes("function installWebpack("), "example 没有 webpack 站点,不应打进 webpack 驱动");
 });

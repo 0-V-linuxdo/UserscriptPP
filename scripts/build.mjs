@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // 构建站点脚本。Userscript++ 只提供框架,用户安装的是开发者用它构建出的站点脚本:一条脚本 = 一份核心 + 站点适配 + 插件。
 //
 //   node scripts/build.mjs --site <id>[,<id>...]   用框架仓库 sites/ 下的示例站点构建
@@ -21,9 +22,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** 框架自己的版本(package.json),和站点脚本的版本分开;写进脚本供诊断和 U.frameworkVersion 使用 */
+const FRAMEWORK_VERSION = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const args = process.argv.slice(2);
 const argValues = name => args.flatMap((a, i) => (a === name ? [args[i + 1]] : []));
-const outDir = resolve(argValues("--out")[0] ?? join(root, "dist"));
+// 缺省输出到当前目录的 dist/:框架作为依赖装在 node_modules 里时,产物也落在站点仓库自己的目录
+const outDir = resolve(argValues("--out")[0] ?? "dist");
 const siteIds = [...argValues("--site"), ...argValues("--sites")].flatMap(v => String(v || "").split(",")).map(x => x.trim()).filter(Boolean);
 const siteDirs = argValues("--site-dir").map(p => resolve(p));
 const CHECK_ONLY = !siteIds.length && !siteDirs.length;
@@ -91,7 +95,7 @@ async function loadSite(dir, dev) {
     const meta = await readSiteMeta(entry);
     const dirId = basename(dir).replace(/\.dev$/, "");
     if (meta.id !== dirId) throw new Error(`站点目录 ${basename(dir)} 和站点 ID ${meta.id} 不一致`);
-    return { id: meta.id, name: meta.name, matches: meta.matches, excludeMatches: meta.excludeMatches || [], dir, entry, plugins: collectPluginDir(join(dir, "plugins"), dev) };
+    return { id: meta.id, name: meta.name, matches: meta.matches, excludeMatches: meta.excludeMatches || [], driver: meta.driver || null, dir, entry, plugins: collectPluginDir(join(dir, "plugins"), dev) };
 }
 
 /** 脚本配置(发布信息)来自第一个站点目录的 userscript.json;没给名字空间时按脚本 ID 生成一个唯一值并写回配置,保证以后的构建不变 */
@@ -298,6 +302,9 @@ async function bundle(sites, cfg, dev) {
         define: {
             __USPP_VERSION__: JSON.stringify(cfg.version || VERSION),
             __USPP_DEV__: String(dev),
+            __USPP_FRAMEWORK__: JSON.stringify(FRAMEWORK_VERSION),
+            // 构建期常量:核心直接写在判断里,esbuild 据此去掉发布构建用不到的分支和只在这些分支里引用的模块
+            __USPP_WEBPACK__: String(sites.some(x => x.driver === "webpack")),
             __USPP_HOT__: JSON.stringify(dev && HOT_URL ? HOT_URL : null),
             __USPP_UPDATE__: JSON.stringify(updateInfo(cfg, dev)),
             __USPP_CHANGELOG__: JSON.stringify(readChangelog(sites[0])),

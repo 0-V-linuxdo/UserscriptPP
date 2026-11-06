@@ -1,5 +1,6 @@
 // Turbopack 拦截:包装模块工厂、应用补丁、维护模块缓存
-import { W, IS_DEV, INSTANCE_KEY, INSTANCE_EXPR } from "../env.js";
+/* global __USPP_DEV__ */
+import { W, INSTANCE_KEY, INSTANCE_EXPR } from "../env.js";
 import { Logger } from "./logger.js";
 import { diag, trace, count } from "./diag.js";
 import { applyPatches, canonicalizePatch, canonicalizeFind, describeFind, matchesFind, runPredicate } from "./patches.js";
@@ -635,7 +636,7 @@ export function patchReport() {
         pending,
         // 已停用插件的补丁只校验不应用(开发构建):find 命中了但 match 失配的
         validateMisses: checkOnlyMismatches.slice(),
-        ...(IS_DEV ? { timings: patchTimings() } : {}),
+        ...(__USPP_DEV__ ? { timings: patchTimings() } : {}),
     };
 }
 
@@ -667,10 +668,10 @@ export function logHealthReport() {
     if (orphaned.length) logger.warn(`以下补丁找不到对应模块(孤儿):\n${orphaned.join("\n")}`);
     const noEffect = patchResults.some(r => r.replacements.some(s => s.status === "noEffect"));
     if (patchStats.applied === 0 && (orphaned.length || noEffect)) logger.warn("本次没有任何补丁生效,站点构建很可能已变化");
-    if (IS_DEV && checkOnlyMismatches.length) {
+    if (__USPP_DEV__ && checkOnlyMismatches.length) {
         logger.warn("已禁用插件中失配的补丁:", checkOnlyMismatches);
     }
-    if (IS_DEV) {
+    if (__USPP_DEV__) {
         const slow = patchTimings().filter(t => t.ms >= 5).slice(0, 5);
         if (slow.length) logger.debug(`最慢的 find:${slow.map(t => `${t.plugin} ${t.ms}ms`).join(",")}`);
     }

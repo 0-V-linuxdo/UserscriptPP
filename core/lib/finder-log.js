@@ -1,6 +1,6 @@
 // 查找器登记(只在开发构建里):记下站点适配和插件通过 U 调用过的每个查找器,
 // 之后汇总"解析为空"的那些。站点改版后,它们通常就是最先失效的地方。
-import { IS_DEV } from "../env.js";
+/* global __USPP_DEV__ */
 
 const log = new Map(); // key -> { type, args, lazy, ok, calls, resolve }
 
@@ -19,7 +19,7 @@ const empty = v => v == null || (Array.isArray(v) ? !v.length : typeof v === "ob
  * @param names 要登记的名字;名字以 Lazy 结尾的,检查时用去掉 Lazy 的同名函数重新求值
  */
 export function trackFinders(api, names) {
-    if (!IS_DEV) return;
+    if (!__USPP_DEV__) return;
     for (const name of names) {
         const fn = api[name];
         if (typeof fn !== "function") continue;

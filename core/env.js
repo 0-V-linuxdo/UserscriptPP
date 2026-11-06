@@ -17,6 +17,8 @@ export const GM = {
     info: typeof GM_info !== "undefined" ? GM_info : null,
 };
 
+/** 构建这条脚本所用的 Userscript++ 框架版本(框架 package.json 的 version) */
+export const FRAMEWORK_VERSION = typeof __USPP_FRAMEWORK__ !== "undefined" ? __USPP_FRAMEWORK__ : "0.0.0";
 export const VERSION = typeof __USPP_VERSION__ !== "undefined" ? __USPP_VERSION__ : "0.0.0";
 export const IS_DEV = typeof __USPP_DEV__ !== "undefined" ? __USPP_DEV__ : false;
 /** --hot 构建时是本机热重载服务的地址,否则为 null */
