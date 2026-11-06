@@ -22,7 +22,8 @@ w.GM_addValueChangeListener = () => 1;
 w.GM_registerMenuCommand = (name, fn) => { menus.push({ name, fn }); return menus.length; };
 w.GM_unregisterMenuCommand = id => { if (menus[id - 1]) menus[id - 1].removed = true; };
 // 本脚本的 GM 数据里有已不在这条脚本里的插件的数据:启动后清理
-store.set("UserscriptPPSettings", { plugins: { GrokChatBar: { enabled: true }, SomeGrokPlugin: { enabled: true, x: 1 } } });
+// 本次构建里没有的插件:GrokChatBar 没有记录(这次开始计时、保留),SomeGrokPlugin 91 天前最后见到(删除)
+store.set("UserscriptPPSettings", { plugins: { GrokChatBar: { enabled: true }, SomeGrokPlugin: { enabled: true, x: 1 }, Settings: { pluginsLastSeen: { SomeGrokPlugin: Date.now() - 91 * 864e5 } } } });
 w.eval(bundle);
 const liveMenus = () => menus.filter(m => !m.removed).map(m => m.name);
 (async () => {
@@ -49,7 +50,7 @@ const liveMenus = () => menus.filter(m => !m.removed).map(m => m.name);
     await sleep(300);
     out.siteStorage = w.localStorage.getItem(SK);
     const saved = store.get("UserscriptPPSettings");
-    out.staleCleaned = !saved.plugins.GrokChatBar && !saved.plugins.SomeGrokPlugin;
+    out.staleCleaned = { kept: !!saved.plugins.GrokChatBar, keptSince: typeof saved.plugins.Settings.pluginsLastSeen?.GrokChatBar, expired: !saved.plugins.SomeGrokPlugin, recordGone: !("SomeGrokPlugin" in (saved.plugins.Settings.pluginsLastSeen || {})) };
     out.here = saved.plugins.Settings.sites?.[new w.URL(url).hostname]?.customCSS;
     // 菜单命令打开框架设置面板
     menus[0]?.fn();

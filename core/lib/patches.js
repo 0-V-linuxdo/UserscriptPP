@@ -73,6 +73,8 @@ export function canonicalizeReplacement(r, pluginName, self = selfExpr(pluginNam
     return { ...r, match, replace };
 }
 
+const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+
 let seq = 0;
 /** 返回登记用的补丁记录 */
 export function canonicalizePatch(patch, pluginName, checkOnly = false, self) {
@@ -101,17 +103,97 @@ export function runPredicate(pred, label) {
  * 对一段工厂源码依次尝试所有补丁。
  * @returns {{ code, applied: string[], results: object[], mismatches: object[] }}
  */
+// ---------- 预筛 ----------
+// 绝大多数模块不命中任何补丁。把补丁 find 里一定会出现的字面量合成一个正则,每个模块先扫一遍:
+// 一个字面量都没有时,这些补丁整体跳过,不再逐条测试。预筛只决定"跳过",命中后仍逐条完整匹配。
+
+/** 正则里一定会出现的最长字面量(只看顶层;有顶层 | 、忽略大小写时没有) */
+export function requiredLiteral(re) {
+    if (!(re instanceof RegExp) || re.flags.includes("i")) return null;
+    const src = re.source;
+    let best = "", run = "", depth = 0;
+    const flush = () => { if (run.length > best.length) best = run; run = ""; };
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (c === "\\") {
+            const n = src[i + 1];
+            i++;
+            if (n === undefined) break;
+            if (depth === 0 && /[^\w]/.test(n)) {
+                // 转义的符号是字面量,但后面跟可选量词时不一定出现
+                if ("?*{".includes(src[i + 1])) flush(); else run += n;
+            } else {
+                if (depth === 0) flush();
+                // 带参数的转义:\xHH、\uHHHH / \u{…}、\cX、\k<名字>、\p{…}、反向引用 \12,参数不是字面量
+                const skip = { x: /^[0-9a-fA-F]{0,2}/, u: /^(\{[^}]*\}|[0-9a-fA-F]{0,4})/, c: /^[A-Za-z]?/, k: /^<[^>]*>/, p: /^\{[^}]*\}/, P: /^\{[^}]*\}/ }[n] ?? (/\d/.test(n) ? /^\d*/ : null);
+                if (skip) i += skip.exec(src.slice(i + 1))[0].length;
+            }
+            continue;
+        }
+        if (c === "[") {
+            // 跳过字符类
+            flush();
+            for (i++; i < src.length && src[i] !== "]"; i++) if (src[i] === "\\") i++;
+            continue;
+        }
+        if (c === "(") { if (depth === 0) flush(); depth++; continue; }
+        if (c === ")") { depth = Math.max(0, depth - 1); continue; }
+        if (depth > 0) continue;
+        if (c === "|") return null;
+        if (c === "?" || c === "*" || c === "{") { run = run.slice(0, -1); flush(); if (c === "{") { while (i < src.length && src[i] !== "}") i++; } continue; }
+        if (c === "+") { flush(); continue; }
+        if (c === "." || c === "^" || c === "$") { flush(); continue; }
+        run += c;
+    }
+    flush();
+    return best.length >= 3 ? best : null;
+}
+
+/** 一条补丁的 find 里一定会出现的字面量;取不到时返回 null(这条补丁不参与预筛) */
+function literalOfFind(find) {
+    const one = f => (typeof f === "string" ? (f.length ? f : null) : requiredLiteral(f));
+    if (!Array.isArray(find)) return one(find);
+    let best = null;
+    for (const f of find) { const l = one(f); if (l && (!best || l.length > best.length)) best = l; }
+    return best;
+}
+
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const prefilters = new WeakMap(); // 补丁列表 -> { length, re, members }
+function prefilterOf(patchList) {
+    let pf = prefilters.get(patchList);
+    if (pf && pf.length === patchList.length) return pf;
+    const members = new Set(), lits = new Set();
+    for (const p of patchList) {
+        const lit = literalOfFind(p.find);
+        if (!lit) continue;
+        members.add(p);
+        lits.add(lit);
+    }
+    pf = { length: patchList.length, members, re: lits.size ? new RegExp([...lits].map(escapeRe).join("|")) : null };
+    prefilters.set(patchList, pf);
+    return pf;
+}
+
 export function applyPatches(moduleId, source, patchList, stats) {
     let code = source;
     const appliedPlugins = new Set();
     const results = [];
     const mismatches = [];
+    const pf = prefilterOf(patchList);
+    // 一个字面量都不出现:参与预筛的补丁都不可能命中
+    const skipMembers = !!pf.re && !pf.re.test(source);
 
     for (const p of patchList) {
         if (p.consumed) continue;
+        // 前面的补丁改过代码后,后面补丁的 find 可能匹配新代码:这时不再用预筛结果
+        if (skipMembers && code === source && pf.members.has(p)) continue;
         if (!runPredicate(p.predicate, p.plugin)) continue;
         let hit;
+        const t0 = IS_DEV ? now() : 0;
         try { hit = matchesFind(code, p.find); } catch (e) { logger.error(`${p.plugin}: find 出错`, e); continue; }
+        // 开发构建:累计每条补丁 find 的耗时(所有模块加起来),健康报告里列出最慢的几条
+        if (IS_DEV) p.ms = (p.ms || 0) + (now() - t0);
         if (!hit) continue;
         if (!p.all) p.consumed = true;
 

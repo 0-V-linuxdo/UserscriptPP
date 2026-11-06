@@ -59,18 +59,21 @@ function conversationExtras(conversationId, base) {
     const hit = extrasCache.get(conversationId);
     if (hit && hit.base === base && hit.ver === ver) return hit.arr;
     const defs = getContextMenuItems("conversation");
-    if (!defs.length) {
+    const hasPatch = U.getSlotItems(MENU_SLOTS.conversation, { all: true }).some(d => typeof d.patch === "function");
+    if (!defs.length && !hasPatch) {
         extrasCache.delete(conversationId);
         return base;
     }
     const ctx = { conversationId };
+    // 先让插件的 patch 改原生项,再追加插件的项
+    const native = hasPatch ? U.applyMenuPatches(MENU_SLOTS.conversation, Array.isArray(base) ? base : [], ctx) : base;
     const mine = defs.map(def => ({
         id: `uspp-${def.id}`,
         icon: def.icon != null ? h("span", { className: "text-fg-secondary" }, iconNode(def.icon)) : null,
         label: def.render ? h(ErrorBoundary, { fallback: null }, h(def.render, ctx)) : def.label,
         onSelect: () => run(def, ctx),
     }));
-    const arr = [...(Array.isArray(base) ? base : []), ...mine];
+    const arr = [...(Array.isArray(native) ? native : []), ...mine];
     extrasCache.set(conversationId, { base, ver, arr });
     if (extrasCache.size > 500) extrasCache.delete(extrasCache.keys().next().value);
     return arr;

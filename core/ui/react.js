@@ -15,6 +15,12 @@ const bundled = Object.freeze({
 let locked = null;
 let siteReadyFlag = false;
 export function markSiteReady() { siteReadyFlag = true; }
+// 用户主动打开界面(设置、弹窗、安全模式提示)时最多等站点渲染器这么久,之后改用内置渲染器;
+// 否则站点 React 找不到时要等到站点就绪超时(缺省 15 秒)界面才出来
+export const INTERACTIVE_WAIT_MS = 1500;
+let wantedAt = 0;
+/** 有界面等着显示:从第一次调用开始计时 */
+export function wantUi() { if (!wantedAt) wantedAt = Date.now(); }
 
 /**
  * 站点的 renderer() 返回 { React, createRoot, createPortal?, flushSync? } 或 null(还没加载)。
@@ -27,7 +33,8 @@ export function getRenderer() {
         let r = null;
         try { r = site.renderer(); } catch { r = null; }
         if (r && r.React && typeof r.createRoot === "function") return (locked = Object.freeze({ name: "site", site: true, flushSync: fn => fn(), ...r }));
-        if (!siteReadyFlag) return null;
+        if (!siteReadyFlag && !(wantedAt && Date.now() - wantedAt >= INTERACTIVE_WAIT_MS)) return null;
+        if (!siteReadyFlag) console.info(`[Userscript++] 站点渲染器 ${INTERACTIVE_WAIT_MS} ms 内没就绪,界面改用内置渲染器`);
     }
     return (locked = bundled);
 }

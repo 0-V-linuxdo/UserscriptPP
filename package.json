@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch --dev",
+    "hot": "node scripts/build.mjs --hot",
+    "create": "node scripts/create.mjs",
+    "check:patches": "node scripts/check-patches.mjs",
     "test": "node --test test/smoke.test.mjs"
   },
   "devDependencies": {
@@ -13,5 +17,6 @@
     "preact": "^10.29.8",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
-  }
+  },
+  "types": "types/index.d.ts"
 }

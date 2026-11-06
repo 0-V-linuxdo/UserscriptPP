@@ -16,5 +16,5 @@ export function QuickCssTab() {
     return h("div", { className: "uspp-page", "data-uspp-page": "quickcss" },
         h(Row, { title: "Enable Quick CSS", description: `Applies as you type, only on ${siteLabel()}. Turning it off keeps your code but stops applying it.` },
             h(Switch, { checked: enabled, label: "Enable Quick CSS", onChange: v => setQuickCss({ enabled: v }) })),
-        h(CodeEditor, { value: css, readOnly: !enabled, placeholder: "Paste your CSS here...", minHeight: 360, onChange: v => setQuickCss({ css: v }) }));
+        h(CodeEditor, { value: css, readOnly: !enabled, placeholder: "Paste your CSS here...", minHeight: 360, language: "css", onChange: v => setQuickCss({ css: v }) }));
 }

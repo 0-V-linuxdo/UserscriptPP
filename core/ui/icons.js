@@ -36,3 +36,6 @@ export const LogoIcon = svg(["M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M12 8v8", "M8 12
 export const CircleAlertIcon = svg(["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 8v4", "M12 16h.01"]);
 export const EyeIcon = svg(["M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"]);
 export const ArchiveIcon = svg(["M3 4h18v4H3z", "M5 8v12h14V8", "M10 12h4"]);
+export const KeyboardIcon = svg(["M2 6h20v12H2z", "M6 10h.01", "M10 10h.01", "M14 10h.01", "M18 10h.01", "M7 14h10"]);
+export const BellIcon = svg(["M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.9 1.9 0 0 0 3.4 0"]);
+export const SearchIcon = svg(["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M21 21l-4.3-4.3"]);

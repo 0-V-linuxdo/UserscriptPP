@@ -46,7 +46,8 @@ let timer = 0;
 export function showNotice({ message, type = "INFO", action, duration } = {}) {
     clearTimeout(timer);
     notice = { message, type: String(type).toUpperCase(), action, id: Date.now() };
-    ensureRoot();
+    // 常驻提示(例如安全模式)要尽快让用户看到
+    ensureRoot({ interactive: true });
     emit();
     if (duration > 0) timer = setTimeout(closeNotice, duration);
 }

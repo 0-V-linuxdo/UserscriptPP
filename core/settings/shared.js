@@ -1,7 +1,7 @@
 // Settings 插件内部共用的小工具
 import { Settings, PlainSettings } from "../lib/settings.js";
 
-export const TAB_IDS = { plugins: "uspp_plugins_tab", themes: "uspp_themes_tab", quickCss: "uspp_quickcss_tab", backup: "uspp_backup_tab" };
+export const TAB_IDS = { plugins: "uspp_plugins_tab", themes: "uspp_themes_tab", quickCss: "uspp_quickcss_tab", backup: "uspp_backup_tab", keybinds: "uspp_keybinds_tab", notifications: "uspp_notifications_tab", updates: "uspp_updates_tab" };
 
 export const sys = () => Settings.plugins.Settings;
 export const sysPlain = () => PlainSettings.plugins.Settings ??= {};

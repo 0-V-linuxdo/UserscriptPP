@@ -1,0 +1,48 @@
+# 持续集成:每次推送和合并请求跑冒烟测试、构建示例站点、静态检查补丁;
+# 每周一次(也可以手动触发)拉取线上页面逐条测试补丁,站点改版导致补丁失效时这一步会失败并在日志里标出是哪条。
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # 不带站点参数:逐个示例站点检查能否构建(发布和开发两种)
+      - run: node scripts/build.mjs
+      - run: node scripts/check-patches.mjs --site grok
+      - run: node scripts/build.mjs --site grok --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: userscripts
+          path: dist/*.js
+          retention-days: 14
+
+  live-patches:
+    # 线上检查要访问站点,只在定时任务和手动触发时跑,不挡合并
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/check-patches.mjs --site grok --url https://grok.com/

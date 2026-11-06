@@ -1,5 +1,6 @@
 // 抽象控件:当前站点提供了原生实现时用原生的,找不到或渲染出错时用核心自绘版
-import { h, Fragment, ErrorBoundary, siteComponent } from "./react.js";
+import { h, Fragment, ErrorBoundary, siteComponent, useRef } from "./react.js";
+import { highlightCss } from "./highlight.js";
 import { classes } from "../lib/utils.js";
 
 function withFallback(nativeRender, fallbackRender, label) {
@@ -74,11 +75,16 @@ export function Input(props) {
     });
 }
 
-export function CodeEditor({ value, onChange, placeholder, readOnly, minHeight = 240 }) {
-    return h("textarea", {
-        className: "uspp-textarea", value, placeholder, readOnly: !!readOnly, spellCheck: false,
+/** 代码编辑框;language 为 "css" 时带语法高亮(高亮层在透明的文本框下面,编辑行为不变) */
+export function CodeEditor({ value, onChange, placeholder, readOnly, minHeight = 240, language }) {
+    const pre = useRef(null);
+    const sync = t => { if (pre.current) { pre.current.scrollTop = t.scrollTop; pre.current.scrollLeft = t.scrollLeft; } };
+    const area = h("textarea", {
+        className: classes("uspp-textarea", language && "uspp-code-input"), value, placeholder, readOnly: !!readOnly, spellCheck: false,
         style: { minHeight },
+        "data-language": language || undefined,
         onChange: e => onChange?.(e.target.value),
+        onScroll: e => sync(e.target),
         onKeyDown: e => {
             if (e.key === "Tab" && !readOnly) {
                 e.preventDefault();
@@ -89,6 +95,10 @@ export function CodeEditor({ value, onChange, placeholder, readOnly, minHeight =
             }
         },
     });
+    if (language !== "css") return area;
+    return h("div", { className: classes("uspp-code", readOnly && "uspp-code-readonly") },
+        h("pre", { ref: pre, className: "uspp-code-hl", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: highlightCss(value || "") + "\n" } }),
+        area);
 }
 
 export const Tooltip = withFallback(
@@ -100,6 +110,12 @@ export const Tooltip = withFallback(
     ({ content, children }) => h("span", { title: typeof content === "string" ? content : undefined, style: { display: "inline-flex" } }, children),
     "Tooltip",
 );
+
+/** 多行文本输入 */
+export function Textarea(props) {
+    const { className, rows = 4, ...rest } = props;
+    return h("textarea", { ...rest, rows, className: classes("uspp-input", "uspp-textarea-plain", className) });
+}
 
 export function Row({ title, description, children }) {
     return h("div", { className: "uspp-row" },

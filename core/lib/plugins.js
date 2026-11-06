@@ -10,6 +10,11 @@ import { addSlotItem, removeSlotItem } from "./slots.js";
 import { findStore, waitFor, filters } from "./finders.js";
 import { getReact } from "../ui/react.js";
 import { getSite } from "./sites.js";
+import { openScope, closeScope, getScope, runAs } from "./scope.js";
+import { registerCommand } from "./commands.js";
+import { addInterceptor } from "./interceptors.js";
+import { registerSettingsPage } from "./settings-pages.js";
+import { isSafeMode, noteStarting, noteFailed } from "./safemode.js";
 
 const logger = new Logger("PluginManager", "#a5b4fc");
 
@@ -145,7 +150,7 @@ export function registerPatches() {
     for (const p of Object.values(plugins)) {
         if (!pluginHasPatches(p) || runtimeRegistered.has(p.name)) continue;
         if (!siteHasDriver()) { patchesNotApplicable.add(p.name); continue; }
-        const enabled = isPluginEnabled(p.name);
+        const enabled = isPluginEnabled(p.name) && (!isSafeMode() || p.required);
         if (!enabled && !IS_DEV) continue;
         p.patches.forEach((patch, i) => {
             try {
@@ -249,12 +254,25 @@ export function startPlugin(p, stack = []) {
         }
     }
 
+    noteStarting(p.name);
+    p.startError = null;
+    const ctx = openScope(p.name);
     try {
         if (p.managedStyle) {
             enableStyle(p.managedStyle);
             if (!pluginHasPatches(p)) track(p.name, () => disableStyle(p.managedStyle));
         }
-        p.start?.();
+        runAs(p.name, () => p.start?.(ctx));
+        for (const c of p.commands || []) {
+            if (!c) continue;
+            track(p.name, registerCommand({ ...c, id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
+        }
+        for (const [name, fn] of Object.entries(p.interceptors || {})) {
+            if (typeof fn === "function") track(p.name, addInterceptor(name, fn.bind(p), { id: p.name }));
+        }
+        for (const page of p.settingsPages || []) {
+            if (page) track(p.name, registerSettingsPage({ ...page, plugin: p.name }));
+        }
         for (const [slot, value] of Object.entries(pluginSlots(p))) {
             const list = Array.isArray(value) ? value : [value];
             list.forEach((item, i) => {
@@ -283,7 +301,10 @@ export function startPlugin(p, stack = []) {
         return true;
     } catch (e) {
         logger.error(`启动 ${p.name} 失败`, e);
+        p.startError = e;
+        noteFailed(p.name);
         runCleanup(p.name);
+        closeScope(p.name);
         if (p.managedStyle && !pluginHasPatches(p)) disableStyle(p.managedStyle);
         p.started = false;
         return false;
@@ -294,8 +315,9 @@ export function stopPlugin(p) {
     if (typeof p === "string") p = plugins[p];
     if (!p) return false;
     if (!p.started) return true;
-    try { p.stop?.(); } catch (e) { logger.error(`${p.name}.stop 出错`, e); }
+    try { runAs(p.name, () => p.stop?.(getScope(p.name) ?? undefined)); } catch (e) { logger.error(`${p.name}.stop 出错`, e); }
     runCleanup(p.name);
+    closeScope(p.name);
     if (p.managedStyle && !pluginHasPatches(p)) {
         try { disableStyle(p.managedStyle); } catch (e) { logger.error(e); }
     }
@@ -338,6 +360,27 @@ export function togglePlugin(name) {
     return needsRestart(p);
 }
 
+/**
+ * 热重载:用新定义替换同名插件。原来在运行就先停(经 ctx 登记的都会撤掉),换上新定义后再启动;开关状态和设置不变。
+ * 声明了打包器补丁的插件不能原地替换(补丁只在模块加载时生效),返回 { ok: false, reason: "patches" }。
+ */
+export function replacePlugin(def) {
+    if (!def?.name) return { ok: false, reason: "invalid" };
+    const old = plugins[def.name];
+    if (!old) return { ok: false, reason: "missing" };
+    if (siteHasDriver() && (pluginHasPatches(old) || pluginHasPatches(def))) return { ok: false, reason: "patches" };
+    const wasStarted = !!old.started;
+    if (wasStarted) stopPlugin(old);
+    def.site ??= old.site;
+    def.started = false;
+    if (def.settings) def.settings.pluginName = def.name;
+    bindMethods(def);
+    plugins[def.name] = def;
+    const started = wasStarted ? startPlugin(def) : false;
+    dispatch(Events.PLUGIN_TOGGLE, { name: def.name, enabled: isPluginEnabled(def.name), replaced: true });
+    return { ok: !wasStarted || started, started, error: def.startError ?? null };
+}
+
 export function registerPlugin(def) {
     if (!addPlugin(def, { runtime: true })) return false;
     // 首次见到也计入 knownPlugins
@@ -347,10 +390,33 @@ export function registerPlugin(def) {
 }
 
 // ---------- 初始化辅助 ----------
-export function cleanStaleSettings() {
+/**
+ * 本次构建里没有的插件:设置和插件数据不立即删(插件可能只是暂时拿掉、改了名、或用户回退了版本),
+ * 记下最后见到它的时间,超过 STALE_MS 没再出现才删。返回还要保留数据的插件名(给 pruneData)。
+ */
+export const STALE_MS = 90 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+export function cleanStaleSettings(now = Date.now()) {
+    const sys = Settings.plugins.Settings;
+    if (!PlainSettings.plugins.Settings?.pluginsLastSeen || typeof PlainSettings.plugins.Settings.pluginsLastSeen !== "object") sys.pluginsLastSeen = {};
+    const seen = sys.pluginsLastSeen;
+    const plain = PlainSettings.plugins.Settings.pluginsLastSeen;
+    const present = name => !!plugins[name] || otherSites.has(name);
+    // 在场的插件:最后见到的时间按天更新,避免每次启动都写设置
+    for (const name of Object.keys(plugins)) if (!(now - (plain[name] || 0) < DAY_MS)) seen[name] = now;
+    const keep = new Set([...Object.keys(plugins), ...otherSites]);
     for (const name of Object.keys(PlainSettings.plugins)) {
-        if (!plugins[name] && !otherSites.has(name)) delete Settings.plugins[name];
+        if (present(name)) continue;
+        const at = plain[name];
+        if (!at) { seen[name] = now; keep.add(name); continue; }
+        if (now - at < STALE_MS) { keep.add(name); continue; }
+        delete Settings.plugins[name];
+        delete seen[name];
+        logger.info(`插件 ${name} 已 ${Math.round((now - at) / DAY_MS)} 天没出现,删除它的设置和数据`);
     }
+    // 只有数据、没有设置的插件(数据库里的名字)也按最后见到的时间保留
+    for (const name of Object.keys(plain)) if (!present(name) && now - plain[name] < STALE_MS) keep.add(name);
+    return [...keep];
 }
 
 export function recordKnownPlugins() {
@@ -384,6 +450,7 @@ export function startAllAt(stage) {
     for (const p of Object.values(plugins)) {
         if ((p.startAt ?? StartAt.Init) !== stage) continue;
         if (!isPluginEnabled(p.name) || p.started) continue;
+        if (isSafeMode() && !p.required) continue;
         if (!startPlugin(p)) failed.push(p);
     }
     return failed;

@@ -1,5 +1,5 @@
 // 弹窗:openModal / closeModal / closeAllModals
-import { h, useEffect, useSubscription, Fragment, getRenderer } from "./react.js";
+import { h, useEffect, useRef, useSubscription, Fragment, getRenderer } from "./react.js";
 import { ErrorBoundary } from "./react.js";
 import { addLayer, ensureRoot } from "./root.js";
 import { CloseIcon } from "./icons.js";
@@ -23,7 +23,7 @@ export function openModal(render, { modalKey } = {}) {
     const key = modalKey ?? `uspp-modal-${++seq}`;
     modals = modals.filter(m => m.key !== key);
     modals.push({ key, render, container: topHostDialog() });
-    if (!ensureRoot()) logger.warn("界面根尚未就绪,弹窗会在就绪后显示");
+    if (!ensureRoot({ interactive: true })) logger.debug("界面根尚未就绪,弹窗会在就绪后显示");
     emit();
     return key;
 }
@@ -42,11 +42,39 @@ export function closeAllModals() {
 
 export const getOpenModals = () => modals.map(m => m.key);
 
+// 弹窗里能用 Tab 停留的元素
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+const focusables = el => [...el.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null || x.getClientRects().length > 0);
+const focusSafe = el => { try { el?.focus({ preventScroll: true }); } catch { /* 忽略 */ } };
+
 function ModalFrame({ entry, isTop }) {
     const onClose = () => closeModal(entry.key);
+    const ref = useRef(null);
+    // 打开时把焦点移进弹窗,关闭时还给打开前的元素
+    useEffect(() => {
+        const prev = document.activeElement;
+        const el = ref.current;
+        if (el && !el.contains(document.activeElement)) focusSafe(el.querySelector("[autofocus]") || el.querySelector('[role="dialog"]') || focusables(el)[0]);
+        return () => {
+            const now = document.activeElement;
+            if (prev && prev.isConnected && (!now || now === document.body || el?.contains(now) || !now.isConnected)) focusSafe(prev);
+        };
+    }, []);
     useEffect(() => {
         if (!isTop) return;
         const onKey = e => {
+            if (e.key === "Tab") {
+                // 焦点陷阱:Tab / Shift+Tab 在弹窗里循环,不跑到后面的页面上
+                const el = ref.current;
+                if (!el) return;
+                const list = focusables(el);
+                if (!list.length) { e.preventDefault(); return; }
+                const first = list[0], last = list[list.length - 1], cur = document.activeElement;
+                if (!el.contains(cur)) { e.preventDefault(); focusSafe(e.shiftKey ? last : first); }
+                else if (e.shiftKey && (cur === first || !list.includes(cur))) { e.preventDefault(); focusSafe(last); }
+                else if (!e.shiftKey && cur === last) { e.preventDefault(); focusSafe(first); }
+                return;
+            }
             if (e.key !== "Escape") return;
             e.stopImmediatePropagation();
             e.preventDefault();
@@ -59,6 +87,7 @@ function ModalFrame({ entry, isTop }) {
     let content;
     try { content = entry.render({ onClose, modalKey: entry.key }); } catch (e) { logger.error("弹窗渲染出错", e); content = null; }
     const overlay = h("div", {
+        ref,
         className: "uspp-overlay",
         style: entry.container ? { position: "fixed", zIndex: 2147483000 } : undefined,
         onMouseDown: e => { if (e.target === e.currentTarget) e.currentTarget.dataset.down = "1"; },
@@ -79,7 +108,7 @@ addLayer("modals", ModalHost);
 
 // ---------- 标准弹窗外观 ----------
 export function ModalCard({ title, subtitle, children, footer, onClose, width }) {
-    return h("div", { className: "uspp-modal", role: "dialog", "aria-modal": "true", style: width ? { width: `min(${width}px, 100%)` } : undefined, onClick: e => e.stopPropagation() },
+    return h("div", { className: "uspp-modal", role: "dialog", "aria-modal": "true", "aria-label": typeof title === "string" ? title : undefined, tabIndex: -1, style: width ? { width: `min(${width}px, 100%)` } : undefined, onClick: e => e.stopPropagation() },
         h("button", { type: "button", className: "uspp-btn uspp-btn-icon uspp-modal-close", "aria-label": "Close", onClick: onClose }, h(CloseIcon, { size: 4 })),
         (title || subtitle) && h("div", { className: "uspp-modal-header" },
             title && h("h2", { className: "uspp-modal-title" }, title),

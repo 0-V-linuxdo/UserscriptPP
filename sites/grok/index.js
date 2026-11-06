@@ -36,10 +36,13 @@ export default U => {
         events: ["streamEnd"],
         slots: [
             { name: "chatBar", kind: "button", context: "点击事件;按钮可用 locations: [\"chat\", \"imagine\"] 选择出现在哪个输入栏" },
-            { name: "conversationMenu", kind: "menu", context: "{ conversationId }" },
+            { name: "conversationMenu", kind: "menu", patch: true, context: "{ conversationId };可以用 patch(items, ctx) 增、删、改原生菜单项,items 为 { id, label, icon, onSelect }" },
             { name: "messageMenu", kind: "menu", context: "{ response: { responseId, conversationId, ... } }" },
             { name: "userMenu", kind: "menu", context: "{}" },
+            { name: "messageAccessory", kind: "render", context: "{ responseId, element };在每条回复下方渲染插件的组件" },
+            { name: "messageToolbar", kind: "button", context: "{ response };显示在回复的“更多操作”按钮前面,项也可以写 render" },
         ],
+        interceptors: ["beforeSend"],
         settingsHost,
         // 旧插件字段 chatBarButton / contextMenuItems 映射到本站注入点
         pluginAliases: {

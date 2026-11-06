@@ -58,7 +58,7 @@ function LocalThemeModal({ onClose, theme }) {
         h("label", { className: "uspp-row-title" }, "Name"),
         h(Input, { autoFocus: true, placeholder: "My theme", value: name, onChange: e => setName(e.target.value) }),
         h("label", { className: "uspp-row-title" }, "CSS"),
-        h(CodeEditor, { value: css, onChange: setCss, placeholder: "/* your CSS */", minHeight: 260 })));
+        h(CodeEditor, { value: css, onChange: setCss, placeholder: "/* your CSS */", minHeight: 260, language: "css" })));
 }
 
 function ThemeCard({ t }) {

@@ -4,7 +4,7 @@ import { h, useState } from "../ui/react.js";
 import { Button, Row, Switch } from "../ui/components.js";
 import { confirmDialog } from "../ui/modal.js";
 import { showToast, ToastType } from "../ui/toast.js";
-import { exportSettings, parseBackup, importSettings, downloadJson, backupFilename, pickJsonFile } from "../lib/backup.js";
+import { exportSettings, exportSettingsWithData, parseBackup, importSettings, downloadJson, backupFilename, pickJsonFile } from "../lib/backup.js";
 
 export async function runImport() {
     const text = await pickJsonFile();
@@ -14,11 +14,11 @@ export async function runImport() {
     const s = parsed.summary;
     const ok = await confirmDialog({
         title: "Import settings?",
-        body: `This replaces all current ${SCRIPT_NAME} settings with the file's: ${s.plugins} plugins (${s.enabled} enabled), ${s.themes} themes in ${s.sites} site${s.sites === 1 ? "" : "s"}${s.exportedAt ? `, exported ${s.exportedAt.slice(0, 10)}` : ""}.`,
+        body: `This replaces all current ${SCRIPT_NAME} settings with the file's: ${s.plugins} plugins (${s.enabled} enabled), ${s.themes} themes in ${s.sites} site${s.sites === 1 ? "" : "s"}${s.dataPlugins ? `, and stored data for ${s.dataPlugins} plugin${s.dataPlugins === 1 ? "" : "s"}` : ""}${s.exportedAt ? `, exported ${s.exportedAt.slice(0, 10)}` : ""}.`,
         confirmText: "Import", danger: true,
     });
     if (!ok) return false;
-    const reload = await importSettings(parsed.settings);
+    const reload = await importSettings(parsed.settings, { data: parsed.data });
     showToast("Settings imported.", ToastType.SUCCESS);
     if (reload && await confirmDialog({ title: "Reload required", body: "Some imported plugin changes need a page reload.", confirmText: "Reload", cancelText: "Later" })) location.reload();
     return true;
@@ -26,12 +26,16 @@ export async function runImport() {
 
 export function BackupTab() {
     const [secrets, setSecrets] = useState(false);
+    const [withData, setWithData] = useState(false);
+    const doExport = async () => downloadJson(withData ? await exportSettingsWithData({ includeSensitive: secrets }) : exportSettings({ includeSensitive: secrets }), backupFilename());
     return h("div", { className: "uspp-page", "data-uspp-page": "backup" },
         h("div", { className: "uspp-section" },
             h(Row, { title: "Export settings", description: `Saves all ${SCRIPT_NAME} settings, for every site, to a JSON file.` },
-                h(Button, { onClick: () => downloadJson(exportSettings({ includeSensitive: secrets }), backupFilename()) }, "Export")),
+                h(Button, { onClick: () => { doExport(); } }, "Export")),
             h(Row, { title: "Include sensitive values", description: "Plugin settings marked sensitive (such as keys) are left out unless this is on." },
-                h(Switch, { checked: secrets, label: "Include sensitive values", onChange: setSecrets }))),
+                h(Switch, { checked: secrets, label: "Include sensitive values", onChange: setSecrets })),
+            h(Row, { title: "Include plugin data", description: "Also saves data plugins keep outside their settings, such as caches and history. Can make the file large." },
+                h(Switch, { checked: withData, label: "Include plugin data", onChange: setWithData }))),
         h("div", { className: "uspp-section" },
             h(Row, { title: "Import settings", description: "Replaces all current settings with a file you exported before. You'll be asked to confirm." },
                 h(Button, { onClick: () => { runImport(); } }, "Import"))));

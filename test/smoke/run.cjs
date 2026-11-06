@@ -108,25 +108,7 @@ if (order === "takeover") {
 }
 
 // ---------- 仿 Grok 模块(源码文本决定补丁是否命中) ----------
-const M = {
-    1: `(e,t,n)=>{t.exports=window.__React}`,
-    2: `(e,t,n)=>{t.exports=window.__Jsx}`,
-    3: `(e,t,n)=>{t.exports=window.__RDC}`,
-    4: `(e,t,n)=>{t.exports=window.__RD}`,
-    10: `e=>{"use strict";var t=e.r(2);let t3=[{id:"account",group:"general",icon:null,visible:()=>!0,component:()=>null}];e.s(["NAV_GROUPS",0,["general","grok","payments","data","other","team-management"],"TAB_REGISTRY",0,t3],10)}`,
-    11: `e=>{"use strict";var y={logError(){}};let eE=(k,d)=>d;let el=e=>{switch(e.id){case"account":return eE("settings-tab.account","Account");default:return(0,y.logError)("SettingsDialog:tabLabel",\`No label for settings tab \${e.id}\`),e.id}};let ec=e=>{switch(e){case"general":return eE("settings-nav-group.general","General");case"other":return eE("settings-nav-group.other","Other")}};e.s(["tabLabel",0,el,"groupLabel",0,ec],11)}`,
-    12: `e=>{"use strict";var t=e.r(2),h=e.r(20),d=e.r(21),ei=e.r(21);let _=(k,d)=>d;function Avatar(){let eB=null,eY=()=>{};return(0,t.jsxs)("div",{children:[(0,t.jsxs)(h.DropdownMenuSub,{children:[(0,t.jsxs)(h.DropdownMenuSubTrigger,{ref:eB,children:[(0,t.jsx)("span",{className:"me-2 flex",children:(0,t.jsx)(d.SupportIcon,{size:4,color:"var(--fg-secondary)"})}),_("user-dropdown.help","Help")]})]}),(0,t.jsxs)(h.DropdownMenuItem,{onClick:eY,children:[(0,t.jsx)("span",{className:"inline-flex me-2 text-fg-secondary",children:(0,t.jsx)(ei.SignoutIcon,{size:4})}),_("user-dropdown.sign-out","Sign Out")]})]})}e.s(["AvatarDropdownMenu",0,Avatar],12)}`,
-    13: `e=>{"use strict";var t=e.r(2),S=e.r(20);function C(o){let E={id:o.id,route:{conversationId:o.id},menuExtras:[{id:"del"}]},U=null,L=null;return(0,t.jsx)(S.AppSidebarRow,{...E,extraRight:U,status:L,inset:"text"})}e.s(["ConversationItem",0,C],13)}`,
-    14: `e=>{"use strict";var t=e.r(2),j=e.r(20),er={useReportStore:{getState:()=>({openReportDialog(){}})}};let eZ=(k,d)=>d;function R(o){let tw=o.r;return(0,t.jsx)(j.DropdownMenuContent,{align:"end",children:(0,t.jsx)(j.DropdownMenuItem,{onClick:()=>{er.useReportStore.getState().openReportDialog({responseId:tw.responseId,x:1})},children:eZ("response-action.report","Report")})})}function R2(o){let s=o.r,eQ=[{type:"report",label:"Report"}];return(0,t.jsxs)(j.DropdownMenuContent,{side:"bottom",align:"end",sideOffset:6,onPointerDown:()=>{},children:[eQ.map((n,o)=>(0,t.jsx)(j.DropdownMenuItem,{onClick:()=>{er.useReportStore.getState().openReportDialog({responseId:s.responseId})},children:n.label},o)),null]})}let lbl="response-action.more-actions",tag="more-actions-dropdown";e.s(["MoreActions",0,R,"MoreActions2",0,R2],14)}`,
-    15: `e=>{"use strict";var t=e.r(2),eC={ModeSelect:()=>null};function Q(){return(0,t.jsxs)("div",{children:[(0,t.jsx)("div",{"data-query-bar-mode-select":!0,children:(0,t.jsx)(eC.ModeSelect,{compact:!0,enableModeSwitchHotkey:!0})},"mode-select"),null]})}e.s(["QueryBar",0,Q],15)}`,
-    16: `e=>{"use strict";var t=e.r(2);let en=o=>o.children;function I(o){let op=!1,i9=1,ty=2,t_=3,tN=4,ne=5,tM=6,tO=7,tw=8,nt=9;let tT=(0,t.jsxs)(en,{collapsed:op,children:[i9,ty,t_,tN,ne,tM,tO,tw,nt]});return tT}e.s(["ImagineToolbar",0,I],16)}`,
-    20: `e=>{"use strict";var t=e.r(2);let mk=n=>{let c=o=>(0,t.jsx)("div",{"data-c":n,children:o.children});return c};e.s(["DropdownMenuSub",0,mk("sub"),"DropdownMenuSubTrigger",0,mk("subtrigger"),"DropdownMenuSubContent",0,mk("subcontent"),"DropdownMenuItem",0,o=>(0,t.jsx)("div",{role:"menuitem",onClick:o.onClick,children:o.children}),"DropdownMenuContent",0,mk("content"),"DROPDOWN_MENU_ICON_CLASSES",0,"x","AppSidebarRow",0,o=>(0,t.jsx)("div",{"data-extras":(o.menuExtras||[]).map(x=>x.id).join(","),children:"row"})],20)}`,
-    21: `e=>{"use strict";e.s(["SupportIcon",0,()=>null,"SignoutIcon",0,()=>null],21)}`,
-    30: `e=>{"use strict";let st={open:!1,tab:"account"};let l=new Set;let u=()=>st;u.getState=()=>({...st,setOpen:v=>{st={...st,open:v}},setTab:v=>{st={...st,tab:v}},openTab:v=>{st={...st,open:!0,tab:v}}});u.setState=()=>{};u.subscribe=f=>(l.add(f),()=>l.delete(f));e.s(["useSettingsDialogStore",0,u],30)}`,
-    33: `e=>{"use strict";let q=[{queryKey:["subscriptions"],state:{dataUpdatedAt:1,data:{bestSubscription:"SUBSCRIPTION_TIER_SUPER_GROK_PRO",isEnterpriseUser:!1,hasXSubscription:!1,activeSubscriptions:[{tier:"SUBSCRIPTION_TIER_SUPER_GROK_PRO",status:"SUBSCRIPTION_STATUS_ACTIVE"},{tier:"SUBSCRIPTION_TIER_X_PREMIUM",status:"SUBSCRIPTION_STATUS_CANCELED",billingProvider:"x"}]}}}];let mk=()=>({getQueryCache:()=>({getAll:()=>q}),getQueryData:()=>null,setQueryData(){}});e.s(["makeQueryClient",0,mk],33)}`,
-    32: `e=>{"use strict";let st={conversations:{c1:{nodes:{old:{role:"assistant",status:"complete"}}}}};let l=new Set;let u=()=>st;u.getState=()=>st;u.setState=f=>{st={...st,...(typeof f==="function"?f(st):f)};l.forEach(x=>x(st))};u.subscribe=f=>(l.add(f),()=>l.delete(f));e.s(["useMessageStore",0,u],32)}`,
-    31: `e=>{"use strict";let u=()=>({});u.getState=()=>({});u.setState=()=>{};u.subscribe=()=>()=>{};e.s(["useRoutingStore",0,u],31)}`,
-};
+const { lazy: LAZY, ...M } = require("./grok-modules.cjs");
 // LATE=1:头像菜单不在模块顶层取下拉组件,下拉组件模块要晚些才执行
 if (process.env.LATE) M[12] = M[12].replace("h=e.r(20),", "").replace("function Avatar(){", "function Avatar(){let h=e.r(20);");
 const factories = Object.fromEntries(Object.entries(M).map(([id, src]) => [id, w.eval("(" + src + ")")]));
@@ -145,6 +127,13 @@ Ctx.prototype.r = function (id) {
 Ctx.prototype.s = function (arr) {
     for (let i = 0; i < arr.length;) { const n = arr[i]; if (arr[i + 1] === 0) { const v = arr[i + 2]; Object.defineProperty(this.e, n, { get: () => v, enumerable: true }); i += 3; } else { Object.defineProperty(this.e, n, { get: arr[i + 1], enumerable: true }); i += 2; } }
 };
+// 加载分块:页面里取回分块文件再执行(这里直接把懒分块推给 TURBOPACK)
+const lazyChunkText = `(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["static/chunks/lazy-x.js",${Object.entries(LAZY).map(([id, src]) => `${id},${src}`).join(",")}]);`;
+w.__lazyLoads = 0;
+Ctx.prototype.l = function (path) { w.__lazyLoads++; w.TURBOPACK.push([path, ...Object.entries(LAZY).flatMap(([id, src]) => [+id, w.eval("(" + src + ")")])]); return Promise.resolve(); };
+Ctx.prototype.A = function (id) { return Promise.resolve(this.r(id)); };
+w.__fetched = [];
+w.fetch = async u => { w.__fetched.push(String(u)); return String(u).endsWith("/_next/static/chunks/lazy-x.js") ? { ok: true, status: 200, text: async () => lazyChunkText } : { ok: false, status: 404, text: async () => "" }; };
 const F = c => { for (let i = 1; i < c.length; i++) { const v = c[i]; if (typeof v === "function") registry.has(c[i - 1]) || registry.set(c[i - 1], v); } };
 
 // 早期分块在运行时启动前推入数组
@@ -163,7 +152,7 @@ const req = id => root.r(id);
 (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     // LATE=1:头像菜单模块先于下拉组件模块被执行(兜底触发时组件还取不到)
-    const loadOrder = process.env.LATE ? [1, 2, 3, 4, 21, 10, 11, 12, 15, 16, 30] : [1, 2, 3, 4, 20, 21, 10, 11, 12, 13, 14, 15, 16, 30];
+    const loadOrder = process.env.LATE ? [1, 2, 3, 4, 21, 10, 11, 12, 15, 16, 30, 42] : [1, 2, 3, 4, 20, 21, 10, 11, 12, 13, 14, 15, 16, 30, 42];
     for (const id of loadOrder) { try { req(id); } catch (e) { errors.push("require " + id + ": " + e.stack); } }
     await sleep(50);
     if (process.env.LATE) { req(20); req(13); req(14); await sleep(2500); }
@@ -196,6 +185,38 @@ const req = id => root.r(id);
     P.addContextMenuItem("conversation", "t1", { label: "Probe", onSelect() { } });
     try { out.conv = renderToStaticMarkup(R.createElement(req(13).ConversationItem, { id: "c1" })); } catch (e) { errors.push("conv: " + e.stack); }
     try { out.more = renderToStaticMarkup(R.createElement(req(14).MoreActions, { r: { responseId: "r1" } })).slice(0, 300); } catch (e) { errors.push("more: " + e.stack); }
+    // 菜单补丁:插件改 Grok 原生的会话菜单项(去掉 del)
+    P.addSlotItem("conversationMenu", "patch1", { patch: items => items.filter(i => i.id !== "del") });
+    try { out.convPatched = renderToStaticMarkup(R.createElement(req(13).ConversationItem, { id: "c1" })); } catch (e) { errors.push("conv patched: " + e.stack); }
+    P.removeSlotItem("conversationMenu", "patch1");
+    // 发送前拦截器:改写 / 取消发送请求;没有拦截器时请求不经过改写
+    {
+        const sent = [];
+        const offSeen = P.rewriteRequest(u => u.includes("/rest/app-chat/"), ctx => { sent.push(ctx.body); });
+        const send = msg => w.fetch("https://grok.com/rest/app-chat/conversations/new", { method: "POST", body: JSON.stringify({ message: msg, modelName: "m" }) }).then(() => "sent", e => "blocked:" + e.name);
+        const r0 = await send("  plain  ");
+        P.registerPlugin(P.definePlugin({ name: "SendProbe", description: "x", authors: ["t"], interceptors: { beforeSend: v => (v.text.includes("stop") ? { cancel: true } : { ...v, text: v.text.trim().toUpperCase() }) } }));
+        P.startPlugin("SendProbe");
+        const r1 = await send("  hello  ");
+        const r2 = await send("please stop");
+        P.stopPlugin("SendProbe");
+        offSeen();
+        out.beforeSend = { r0, r1, r2, bodies: sent.map(b => JSON.parse(b).message) };
+        w.__fetched = w.__fetched.filter(u => !u.includes("/rest/"));
+    }
+    // 每条回复下方的渲染型注入点
+    {
+        const resp = w.document.createElement("div");
+        resp.id = "response-r9";
+        w.document.body.append(resp);
+        P.addSlotItem("messageAccessory", "acc1", { render: ({ responseId }) => R.createElement("i", { className: "acc-probe" }, `acc ${responseId}`) });
+        await sleep(200);
+        out.accessory = resp.querySelector(".acc-probe")?.textContent ?? null;
+        P.removeSlotItem("messageAccessory", "acc1");
+        await sleep(100);
+        out.accessoryAfter = resp.querySelector(`[${da}-message-accessory]`) ? "left" : "removed";
+        resp.remove();
+    }
     P.addChatBarButton("b1", { icon: "★", tooltip: "Probe", onClick() { } });
     try { out.query = renderToStaticMarkup(R.createElement(req(15).QueryBar)).slice(0, 400); } catch (e) { errors.push("query: " + e.stack); }
     try { out.imagine = renderToStaticMarkup(R.createElement(req(16).ImagineToolbar)).slice(0, 400); } catch (e) { errors.push("imagine: " + e.stack); }
@@ -305,6 +326,74 @@ const req = id => root.r(id);
         await sleep(1200);
         out.stillForeign = (() => { const d = Object.getOwnPropertyDescriptor(w, "TURBOPACK"); return !!d.get && String(d.get).includes("return cur") && w.TURBOPACK.push.name === "handleChunkPush"; })();
         out.menuPanel = !!w.document.querySelector(`${px}root`)?.textContent.includes("Plugins");
+    }
+    if (order === "first" && !process.env.LATE) {
+        // 补丁检查器(开发构建):注册表里的模块 + 爬到的懒分块;查找器登记
+        P.findByPropsLazy("NoSuchExport");
+        P.findByProps("AvatarDropdownMenu");
+        const chk = await P.checkPatches({ log: false });
+        out.check = { summary: chk.summary, statuses: chk.results.map(r => `${r.plugin}#${r.index}:${r.status}`), crawl: chk.crawl && { chunks: chk.crawl.chunks, failed: chk.crawl.failed.length }, has41: chk.summary.modules, fetched: w.__fetched, finders: chk.finders.map(f => f.finder), timings: (P.patchReport().timings || []).length };
+        // CSS 类名、批量查找
+        out.css = P.findCssClasses("button", "icon");
+        out.bulk = P.findBulk(P.filters.byProps("AvatarDropdownMenu"), P.filters.byProps("NAV_GROUPS"), P.filters.byProps("Nope")).map(x => (x ? Object.keys(x)[0] : null));
+        // 导出注入:已执行的模块立即补上;懒分块里的模块执行时补上
+        const undo = P.injectExports('"SignoutIcon"', { InjectedIcon: ex => typeof ex.SignoutIcon });
+        const undo2 = P.injectExports('"LazyThing"', { LazyUpper: ex => ex.LazyThing.toUpperCase() });
+        out.inject = { now: req(21).InjectedIcon, keep: typeof req(21).SignoutIcon };
+        // 懒加载分块
+        out.lazyBefore = P.findByProps("LazyThing") ? "found" : null;
+        const lzThing = P.webpack.lazy.byProps("LazyThing");
+        const lzInj = P.findByPropsLazy("InjectedLater");
+        out.lazyInc = { before: lzThing.LazyThing ?? null, injBefore: lzInj.InjectedLater ?? null };
+        out.lazyLoaded = await P.extractAndLoadChunks(['"lazy-entry"']);
+        const lazyMod = P.findByProps("LazyThing");
+        out.lazyAfter = lazyMod?.LazyThing ?? null;
+        out.lazyInjected = lazyMod?.LazyUpper ?? null;
+        out.lazyLoads = w.__lazyLoads;
+        out.imported = (await P.importModule(41))?.LazyThing ?? null;
+        out.lazyInc.after = lzThing.LazyThing ?? null;
+        const undo3 = P.injectExports('"SignoutIcon"', { InjectedLater: () => 7 });
+        out.lazyInc.injAfter = lzInj.InjectedLater ?? null;
+        undo3();
+        out.ns = { same: P.webpack.findByProps === P.findByProps, dom: P.dom.observe === P.observe, net: P.net.onRequest === P.onRequest,
+            lazyKeys: Object.keys(P.webpack.lazy).length, lazySame: P.webpack.lazy.byProps === P.findByPropsLazy, frozen: Object.isFrozen(P.ui), settings: P.settings.Settings === P.Settings };
+        undo(); undo2();
+        // 组件库:布局 / 排版 / 提示 / 颜色 / 批量选择,CSS 语法高亮编辑器
+        const K = P.components, hh = P.react.h;
+        const sel = P.createSelectionStore();
+        const kitHost = w.document.createElement("div"); w.document.body.appendChild(kitHost);
+        const kitRoot = w.__RDC.createRoot(kitHost);
+        const Kit = () => hh(K.Flex, { direction: "column", gap: 4 },
+            hh(K.SectionHeader, { title: "Sec", description: "desc" }),
+            hh(K.Grid, { columns: 2 }, hh(K.Text, { weight: "bold" }, "T1"), hh(K.Paragraph, null, "P1")),
+            hh(K.InfoHint, { type: "warn", title: "Heads up" }, "hint"),
+            hh(K.ErrorCard, { error: new Error("boom") }),
+            hh(K.ColorSettingRow, { title: "Accent", value: "#ff0000", onChange() { } }),
+            hh(K.SelectionCheckbox, { selection: sel, id: "a" }),
+            hh(K.SelectionActionBar, { selection: sel, noun: "chat", allIds: ["a", "b"], onDelete() { } }),
+            hh(K.CodeEditor, { value: "body { color: #fff; } /* c */", language: "css", onChange() { } }),
+            hh(K.Textarea, { value: "x\ny", onChange() { } }));
+        w.__RD.flushSync(() => kitRoot.render(hh(Kit)));
+        const before = kitHost.textContent;
+        w.__RD.flushSync(() => sel.add("a"));
+        await sleep(20);
+        out.kit = {
+            text: before.includes("Sec") && before.includes("T1") && before.includes("Heads up") && before.includes("boom"),
+            barBefore: before.includes("selected"), barAfter: kitHost.textContent.includes("1 chat selected"),
+            checked: kitHost.querySelector("input[type=checkbox]").checked,
+            hl: [...kitHost.querySelectorAll("pre span")].map(x => x.className.replace(/^uspp-grok-hl-/, "")).filter((v, i, a) => a.indexOf(v) === i).sort(),
+            color: kitHost.querySelector("input[type=color]")?.value,
+            textarea: kitHost.querySelectorAll("textarea").length,
+        };
+        kitRoot.unmount();
+        // 多行字符串设置:插件设置对话框里是多行输入框
+        P.registerPlugin({ name: "MultiProbe", description: "multi", authors: [], settings: P.definePluginSettings({ notes: { type: P.OptionType.STRING, multiline: true, description: "Notes", default: "line1" } }) });
+        P.openPluginSettings("MultiProbe");
+        await sleep(300);
+        out.multiline = [...w.document.querySelectorAll(`${px}root textarea`)].some(t => t.value === "line1");
+        P.closeAllModals();
+        out.injectUndone = "InjectedIcon" in req(21);
+        out.apiKeys = Object.keys(P);
     }
     out.writable = (() => { try { w[KEY] = 1; } catch { } return w[KEY] === P; })();
     out.globals = { legacy: "UserscriptPP" in w, debug: w[`uspp_${ID.replace(/[^a-z0-9]/g, "_")}`] === P };

@@ -4,6 +4,7 @@ import { Logger } from "./logger.js";
 import { PlainSettings, serialize, parseStored, saveNow, replaceAll } from "./settings.js";
 import { plugins, isPluginEnabled, startPlugin, stopPlugin, needsRestart, sensitiveKeys } from "./plugins.js";
 import { dispatch, Events } from "./events.js";
+import { exportData, importData } from "./datastore.js";
 
 const logger = new Logger("Backup", "#93c5fd");
 export const BACKUP_FORMAT = "userscript-pp-settings";
@@ -21,6 +22,13 @@ export function exportSettings({ includeSensitive = false } = {}) {
     return { format: BACKUP_FORMAT, version: VERSION, exportedAt: new Date().toISOString(), settings };
 }
 
+/** 导出,另带插件数据(插件数据存储里的内容,异步读取) */
+export async function exportSettingsWithData(opts = {}) {
+    const out = exportSettings(opts);
+    out.data = await exportData(Object.keys(plugins));
+    return out;
+}
+
 /** 识别文件内容:接受导出格式,也接受直接是设置对象的 JSON */
 export function parseBackup(text) {
     let obj;
@@ -32,9 +40,12 @@ export function parseBackup(text) {
     const s = data.plugins.Settings || {};
     const parts = s.sites && typeof s.sites === "object" ? Object.values(s.sites) : [];
     const themes = parts.reduce((n, p) => n + (Array.isArray(p?.themes) ? p.themes.length : 0), Array.isArray(s.themes) ? s.themes.length : 0);
+    const pluginData = obj && obj.format === BACKUP_FORMAT && obj.data && typeof obj.data === "object" ? obj.data : null;
     return {
         settings: data,
+        data: pluginData,
         summary: {
+            dataPlugins: pluginData ? Object.keys(pluginData).length : 0,
             plugins: names.length,
             enabled: names.filter(n => data.plugins[n]?.enabled === true).length,
             themes,
@@ -47,7 +58,7 @@ export function parseBackup(text) {
 }
 
 /** 导入:整份替换;文件里密钥类设置为空时保留本机已有的;之后按新设置启停插件。返回 true 表示需要刷新 */
-export async function importSettings(settings) {
+export async function importSettings(settings, { data: pluginData } = {}) {
     const data = clone(settings);
     data.plugins ??= {};
     for (const name of Object.keys(PlainSettings.plugins)) {
@@ -70,6 +81,7 @@ export async function importSettings(settings) {
         dispatch(Events.PLUGIN_TOGGLE, { name, enabled: now });
     }
     await saveNow();
+    if (pluginData) { try { await importData(pluginData); } catch (e) { logger.error("导入插件数据失败", e); } }
     if (reload) dispatch(Events.RELOAD_NEEDED, { reason: "import" });
     return reload;
 }

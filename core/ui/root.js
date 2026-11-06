@@ -1,6 +1,6 @@
 // 本系统自己的界面根:承载弹窗、常驻提示、悬浮按钮,挂在 <body> 上,任何站点都可用
 import { Logger } from "../lib/logger.js";
-import { h, useSubscription, Fragment, getRenderer } from "./react.js";
+import { h, useSubscription, Fragment, getRenderer, wantUi } from "./react.js";
 import { ErrorBoundary } from "./react.js";
 import { installThemeWatcher } from "./theme.js";
 
@@ -25,7 +25,9 @@ function Root() {
 // 阻止事件冒泡到 document,避免站点已打开的对话框把点击当成"外部点击"而关闭
 const STOP = ["pointerdown", "mousedown", "touchstart", "focusin", "focusout", "wheel"];
 
-export function ensureRoot() {
+/** interactive:用户主动打开的界面,站点渲染器迟迟不来时不必等到站点就绪(见 react.js 的 INTERACTIVE_WAIT_MS) */
+export function ensureRoot({ interactive = false } = {}) {
+    if (interactive) wantUi();
     if (root) {
         if (host && !host.isConnected && document.body) document.body.appendChild(host);
         return true;

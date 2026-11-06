@@ -1,5 +1,5 @@
 // 运行环境:页面真实 window 与脚本管理器 API
-/* global unsafeWindow, GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest, GM_addValueChangeListener, GM_removeValueChangeListener, GM_registerMenuCommand, GM_unregisterMenuCommand, GM_setClipboard */
+/* global unsafeWindow, GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest, GM_addValueChangeListener, GM_removeValueChangeListener, GM_registerMenuCommand, GM_unregisterMenuCommand, GM_setClipboard, GM_notification, GM_info */
 
 export const W = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
 
@@ -13,10 +13,14 @@ export const GM = {
     menu: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : null,
     unmenu: typeof GM_unregisterMenuCommand === "function" ? GM_unregisterMenuCommand : null,
     clipboard: typeof GM_setClipboard === "function" ? GM_setClipboard : null,
+    notification: typeof GM_notification === "function" ? GM_notification : null,
+    info: typeof GM_info !== "undefined" ? GM_info : null,
 };
 
 export const VERSION = typeof __USPP_VERSION__ !== "undefined" ? __USPP_VERSION__ : "0.0.0";
 export const IS_DEV = typeof __USPP_DEV__ !== "undefined" ? __USPP_DEV__ : false;
+/** --hot 构建时是本机热重载服务的地址,否则为 null */
+export const HOT_URL = typeof __USPP_HOT__ !== "undefined" ? __USPP_HOT__ : null;
 export const BUILD_TYPE = IS_DEV ? "development" : "production";
 
 export const isChromium = () => !!W.chrome;

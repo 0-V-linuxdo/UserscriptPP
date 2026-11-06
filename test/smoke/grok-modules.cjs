@@ -1,0 +1,27 @@
+// 仿 Grok 模块的源码文本(冒烟测试和补丁检查器测试共用)
+const M = {
+    1: `(e,t,n)=>{t.exports=window.__React}`,
+    2: `(e,t,n)=>{t.exports=window.__Jsx}`,
+    3: `(e,t,n)=>{t.exports=window.__RDC}`,
+    4: `(e,t,n)=>{t.exports=window.__RD}`,
+    10: `e=>{"use strict";var t=e.r(2);let t3=[{id:"account",group:"general",icon:null,visible:()=>!0,component:()=>null}];e.s(["NAV_GROUPS",0,["general","grok","payments","data","other","team-management"],"TAB_REGISTRY",0,t3],10)}`,
+    11: `e=>{"use strict";var y={logError(){}};let eE=(k,d)=>d;let el=e=>{switch(e.id){case"account":return eE("settings-tab.account","Account");default:return(0,y.logError)("SettingsDialog:tabLabel",\`No label for settings tab \${e.id}\`),e.id}};let ec=e=>{switch(e){case"general":return eE("settings-nav-group.general","General");case"other":return eE("settings-nav-group.other","Other")}};e.s(["tabLabel",0,el,"groupLabel",0,ec],11)}`,
+    12: `e=>{"use strict";var t=e.r(2),h=e.r(20),d=e.r(21),ei=e.r(21);let _=(k,d)=>d;function Avatar(){let eB=null,eY=()=>{};return(0,t.jsxs)("div",{children:[(0,t.jsxs)(h.DropdownMenuSub,{children:[(0,t.jsxs)(h.DropdownMenuSubTrigger,{ref:eB,children:[(0,t.jsx)("span",{className:"me-2 flex",children:(0,t.jsx)(d.SupportIcon,{size:4,color:"var(--fg-secondary)"})}),_("user-dropdown.help","Help")]})]}),(0,t.jsxs)(h.DropdownMenuItem,{onClick:eY,children:[(0,t.jsx)("span",{className:"inline-flex me-2 text-fg-secondary",children:(0,t.jsx)(ei.SignoutIcon,{size:4})}),_("user-dropdown.sign-out","Sign Out")]})]})}e.s(["AvatarDropdownMenu",0,Avatar],12)}`,
+    13: `e=>{"use strict";var t=e.r(2),S=e.r(20);function C(o){let E={id:o.id,route:{conversationId:o.id},menuExtras:[{id:"del"}]},U=null,L=null;return(0,t.jsx)(S.AppSidebarRow,{...E,extraRight:U,status:L,inset:"text"})}e.s(["ConversationItem",0,C],13)}`,
+    14: `e=>{"use strict";var t=e.r(2),j=e.r(20),er={useReportStore:{getState:()=>({openReportDialog(){}})}};let eZ=(k,d)=>d;function R(o){let tw=o.r;return(0,t.jsx)(j.DropdownMenuContent,{align:"end",children:(0,t.jsx)(j.DropdownMenuItem,{onClick:()=>{er.useReportStore.getState().openReportDialog({responseId:tw.responseId,x:1})},children:eZ("response-action.report","Report")})})}function R2(o){let s=o.r,eQ=[{type:"report",label:"Report"}];return(0,t.jsxs)(j.DropdownMenuContent,{side:"bottom",align:"end",sideOffset:6,onPointerDown:()=>{},children:[eQ.map((n,o)=>(0,t.jsx)(j.DropdownMenuItem,{onClick:()=>{er.useReportStore.getState().openReportDialog({responseId:s.responseId})},children:n.label},o)),null]})}let lbl="response-action.more-actions",tag="more-actions-dropdown";e.s(["MoreActions",0,R,"MoreActions2",0,R2],14)}`,
+    15: `e=>{"use strict";var t=e.r(2),eC={ModeSelect:()=>null};function Q(){return(0,t.jsxs)("div",{children:[(0,t.jsx)("div",{"data-query-bar-mode-select":!0,children:(0,t.jsx)(eC.ModeSelect,{compact:!0,enableModeSwitchHotkey:!0})},"mode-select"),null]})}e.s(["QueryBar",0,Q],15)}`,
+    16: `e=>{"use strict";var t=e.r(2);let en=o=>o.children;function I(o){let op=!1,i9=1,ty=2,t_=3,tN=4,ne=5,tM=6,tO=7,tw=8,nt=9;let tT=(0,t.jsxs)(en,{collapsed:op,children:[i9,ty,t_,tN,ne,tM,tO,tw,nt]});return tT}e.s(["ImagineToolbar",0,I],16)}`,
+    20: `e=>{"use strict";var t=e.r(2);let mk=n=>{let c=o=>(0,t.jsx)("div",{"data-c":n,children:o.children});return c};e.s(["DropdownMenuSub",0,mk("sub"),"DropdownMenuSubTrigger",0,mk("subtrigger"),"DropdownMenuSubContent",0,mk("subcontent"),"DropdownMenuItem",0,o=>(0,t.jsx)("div",{role:"menuitem",onClick:o.onClick,children:o.children}),"DropdownMenuContent",0,mk("content"),"DROPDOWN_MENU_ICON_CLASSES",0,"x","AppSidebarRow",0,o=>(0,t.jsx)("div",{"data-extras":(o.menuExtras||[]).map(x=>x.id).join(","),children:"row"})],20)}`,
+    21: `e=>{"use strict";e.s(["SupportIcon",0,()=>null,"SignoutIcon",0,()=>null],21)}`,
+    30: `e=>{"use strict";let st={open:!1,tab:"account"};let l=new Set;let u=()=>st;u.getState=()=>({...st,setOpen:v=>{st={...st,open:v}},setTab:v=>{st={...st,tab:v}},openTab:v=>{st={...st,open:!0,tab:v}}});u.setState=()=>{};u.subscribe=f=>(l.add(f),()=>l.delete(f));e.s(["useSettingsDialogStore",0,u],30)}`,
+    33: `e=>{"use strict";let q=[{queryKey:["subscriptions"],state:{dataUpdatedAt:1,data:{bestSubscription:"SUBSCRIPTION_TIER_SUPER_GROK_PRO",isEnterpriseUser:!1,hasXSubscription:!1,activeSubscriptions:[{tier:"SUBSCRIPTION_TIER_SUPER_GROK_PRO",status:"SUBSCRIPTION_STATUS_ACTIVE"},{tier:"SUBSCRIPTION_TIER_X_PREMIUM",status:"SUBSCRIPTION_STATUS_CANCELED",billingProvider:"x"}]}}}];let mk=()=>({getQueryCache:()=>({getAll:()=>q}),getQueryData:()=>null,setQueryData(){}});e.s(["makeQueryClient",0,mk],33)}`,
+    32: `e=>{"use strict";let st={conversations:{c1:{nodes:{old:{role:"assistant",status:"complete"}}}}};let l=new Set;let u=()=>st;u.getState=()=>st;u.setState=f=>{st={...st,...(typeof f==="function"?f(st):f)};l.forEach(x=>x(st))};u.subscribe=f=>(l.add(f),()=>l.delete(f));e.s(["useMessageStore",0,u],32)}`,
+    31: `e=>{"use strict";let u=()=>({});u.getState=()=>({});u.setState=()=>{};u.subscribe=()=>()=>{};e.s(["useRoutingStore",0,u],31)}`,
+    // 懒加载入口:加载 lazy-x.js 分块后执行模块 41
+    40: `e=>{"use strict";let o=()=>Promise.all(["static/chunks/lazy-x.js"].map(t=>e.l(t))).then(()=>e(41));let tag="lazy-entry";e.s(["openLazy",0,o],40)}`,
+    // CSS 模块:导出值是混淆后的类名
+    42: `e=>{"use strict";e.s(["button",0,"Btn-module__k3__button","icon",0,"Btn-module__k3__icon"],42)}`,
+};
+// 只在懒加载分块里的模块(补丁检查器爬取 / extractAndLoadChunks 加载)
+M.lazy = { 41: `e=>{"use strict";e.s(["LazyThing",0,"lazy!"],41)}` };
+module.exports = M;

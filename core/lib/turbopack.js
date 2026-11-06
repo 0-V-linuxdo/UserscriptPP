@@ -2,7 +2,7 @@
 import { W, IS_DEV, INSTANCE_KEY, INSTANCE_EXPR } from "../env.js";
 import { Logger } from "./logger.js";
 import { diag, trace, count } from "./diag.js";
-import { applyPatches, canonicalizePatch, describeFind, matchesFind, runPredicate } from "./patches.js";
+import { applyPatches, canonicalizePatch, canonicalizeFind, describeFind, matchesFind, runPredicate } from "./patches.js";
 
 const logger = new Logger("Turbopack", "#93c5fd");
 const fnToString = Function.prototype.toString;
@@ -23,6 +23,9 @@ const metaById = new Map();                // id -> meta
 const loadListeners = new Set();
 let cacheVersion = 0;
 export const getCacheVersion = () => cacheVersion;
+// 已有模块的导出变了(重新执行、注入导出、撤销注入)时递增;只增加新模块时不变。懒查找器据此决定只扫新模块还是全部重扫
+let resetVersion = 0;
+export const getResetVersion = () => resetVersion;
 
 export const runtime = { registry: null, cache: null, ctx: null };
 
@@ -123,6 +126,8 @@ export function onModuleLoad(cb) {
 
 function registerExports(id, exports) {
     if (exports == null) return;
+    applyInjections(id, exports);
+    if (moduleCache.has(id)) resetVersion++;
     moduleCache.set(id, exports);
     cacheVersion++;
     for (const cb of [...loadListeners]) {
@@ -140,6 +145,7 @@ export function rescanRuntimeCache() {
         if (moduleCache.has(key)) continue;
         const m = c[id];
         if (m && !m.error && m.exports != null) {
+            applyInjections(key, m.exports);
             moduleCache.set(key, m.exports);
             fresh.push([key, m.exports]);
         }
@@ -165,6 +171,68 @@ export function syncRuntimeCache() {
     return rescanRuntimeCache();
 }
 
+// ---------- 导出注入 ----------
+// 给源码匹配 find 的模块追加导出(取值函数,收到模块原有的导出对象)。只在本脚本见到的导出对象上加属性,
+// 不改运行时的公共方法;已有同名导出时不覆盖。模块已执行过的立即补上,之后执行的在执行完时补上。
+const injections = [];
+/** 模块工厂的原文(不经别人的 toString,不触发副作用) */
+function sourceOf(id) {
+    const f = factories.get(id) ?? factories.get(+id) ?? runtime.registry?.get?.(id) ?? runtime.registry?.get?.(+id);
+    if (typeof f !== "function") return null;
+    try { const o = f[META]?.original ?? f; return isForeignWrapper(o) ? String(o.toString()) : fnToString.call(o); } catch { return null; }
+}
+function applyInjection(inj, id, exports) {
+    if (inj.removed || inj.targets.has(exports)) return false;
+    let added = false;
+    for (const [name, get] of Object.entries(inj.exports)) {
+        if (name in exports) { if (!inj.warned) { inj.warned = true; logger.warn(`injectExports:模块 ${id} 已有导出 ${name},不覆盖`); } continue; }
+        try {
+            Object.defineProperty(exports, name, { get: () => get(exports), enumerable: true, configurable: true });
+            inj.added.push([exports, name]);
+            added = true;
+        } catch (e) {
+            logger.warn(`injectExports:模块 ${id} 的导出对象不能追加属性`, e);
+        }
+    }
+    inj.targets.add(exports);
+    if (added) inj.modules.add(id);
+    return added;
+}
+function applyInjections(id, exports) {
+    if (!injections.length || exports == null || (typeof exports !== "object" && typeof exports !== "function")) return;
+    let src;
+    for (const inj of injections) {
+        if (inj.removed) continue;
+        src ??= sourceOf(id) ?? "";
+        if (src && matchesFind(src, inj.find)) applyInjection(inj, id, exports);
+    }
+}
+/**
+ * @param find 字符串 / 正则 / 数组(全部命中),同补丁的 find(支持 \i)
+ * @param exports { 导出名: 原导出对象 => 值 }
+ * @returns 撤销函数(删掉加上的导出)
+ */
+export function injectExports(find, exports) {
+    const inj = { find: canonicalizeFind(find), exports: exports || {}, targets: new WeakSet(), added: [], modules: new Set(), removed: false, warned: false };
+    injections.push(inj);
+    let changed = false;
+    for (const [id] of findInRegistry(src => matchesFind(src, inj.find))) {
+        const ex = moduleCache.get(id) ?? (runtime.cache && runtime.cache[id] && !runtime.cache[id].error ? runtime.cache[id].exports : null);
+        if (ex != null && applyInjection(inj, id, ex)) changed = true;
+    }
+    if (changed) { cacheVersion++; resetVersion++; }
+    const undo = () => {
+        if (inj.removed) return;
+        inj.removed = true;
+        for (const [ex, name] of inj.added) { try { delete ex[name]; } catch { /* 忽略 */ } }
+        injections.splice(injections.indexOf(inj), 1);
+        cacheVersion++;
+        resetVersion++;
+    };
+    undo.modules = inj.modules;
+    return undo;
+}
+
 // ---------- 编译 ----------
 const COMPILED = Symbol.for("uspp.compiled");
 function getNonce() {
@@ -172,8 +240,8 @@ function getNonce() {
     return s ? (s.nonce || s.getAttribute("nonce") || "") : "";
 }
 
-function compile(id, code) {
-    const sourceURL = `\n//# sourceURL=uspp:///turbopack/module-${String(id).replace(/[^\w.-]/g, "_")}.js`;
+export function compile(id, code, kind = "turbopack") {
+    const sourceURL = `\n//# sourceURL=uspp:///${kind}/module-${String(id).replace(/[^\w.-]/g, "_")}.js`;
     const ns = W[INSTANCE_KEY];
     // 1. 带 nonce 的内联 script(运行在页面上下文,兼容 CSP)
     try {
@@ -221,7 +289,7 @@ function captureRuntime(ctx) {
 
 const nativeMapSet = Map.prototype.set;
 /** 这个模块本脚本已经从分块里见过并包装过(外面可能又套了别人的包装) */
-const seenModule = id => metaById.has(id) || metaById.has(String(id)) || metaById.has(+id);
+export const seenModule = id => metaById.has(id) || metaById.has(String(id)) || metaById.has(+id);
 function hookRegistry(reg) {
     const prevSet = reg.set;
     // 已注册但未执行、本脚本又没见过的工厂补上包装。
@@ -240,7 +308,15 @@ function hookRegistry(reg) {
     };
 }
 
-export function wrapFactory(id, original) {
+// 不同打包器的工厂参数不同:适配器告诉包装怎样取运行时、取模块导出、出错后怎样用原始代码重新执行
+const TURBOPACK_ADAPTER = {
+    kind: "turbopack",
+    capture: a => captureRuntime(a[0]),
+    exportsOf: a => a[1] && a[1].exports,
+    fresh: (self, original, a) => runOriginalFresh(self, original, a[0], a[1], a[2], a),
+};
+
+export function wrapFactory(id, original, adapter = TURBOPACK_ADAPTER) {
     if (wrappers.has(original)) return original;
     const existing = wrapperOf.get(original);
     if (existing) return existing;
@@ -264,6 +340,7 @@ export function wrapFactory(id, original) {
             else source = fnToString.call(original);
         } catch { /* 原生函数等 */ }
         if (!source) return;
+        if (adapter.normalize) source = adapter.normalize(source);
         const res = applyPatches(id, source, patches, patchStats);
         if (res.results.length) patchResults.push(...res.results);
         if (res.mismatches.length) checkOnlyMismatches.push(...res.mismatches);
@@ -280,8 +357,9 @@ export function wrapFactory(id, original) {
     meta.resolve = resolve;
     if (!lazy) resolve();
 
-    const wrapper = function (ctx, mod, exp) {
-        captureRuntime(ctx);
+    // eslint-disable-next-line no-unused-vars
+    const wrapper = function (a0, a1, a2) {
+        adapter.capture(arguments);
         resolve();
         trace("factory.run", { id, patched: meta.patched, deferred: meta.deferred });
         let fn = original;
@@ -290,7 +368,7 @@ export function wrapFactory(id, original) {
         } else if (meta.patched && !meta.compileFailed) {
             if (!meta.compiled) {
                 try {
-                    meta.compiled = compile(id, meta.code);
+                    meta.compiled = compile(id, meta.code, adapter.kind);
                 } catch (e) {
                     meta.compileFailed = true;
                     patchStats.errors++;
@@ -311,11 +389,11 @@ export function wrapFactory(id, original) {
             markLost(id, "运行出错");
             patchStats.runtimeFallbacks++;
             logger.error(`模块 ${id} 补丁后运行出错,改用原始代码重新执行(${meta.plugins.join(", ")})`, e);
-            ret = runOriginalFresh(this, original, ctx, mod, exp, arguments);
+            ret = adapter.fresh(this, original, arguments);
         } finally {
             meta.executing = false;
         }
-        try { registerExports(id, mod && mod.exports); } catch (e) { logger.error(e); }
+        try { registerExports(id, adapter.exportsOf(arguments)); } catch (e) { logger.error(e); }
         return ret;
     };
     Object.defineProperty(wrapper, "toString", { value: () => { resolve(); return source != null ? source : fnToString.call(original); }, configurable: true, writable: true });
@@ -449,6 +527,13 @@ let installed = false;
 let ourGetter = null;
 let yieldedTo = null;       // 让给先装脚本的原因;非空时本脚本没有挂接 TURBOPACK
 export const yieldedReason = () => yieldedTo;
+/** 其他驱动(webpack)发现分块全局已被别的脚本挂接时调用:和 TURBOPACK 让给先装的脚本一样处理 */
+export function yieldDriver(reason) {
+    if (yieldedTo) return;
+    yieldedTo = reason;
+    trace("driver.yield", reason);
+    setTimeout(() => { bypassPending(); notifyInactive(); }, 0);
+}
 export function installInterceptor() {
     if (installed) return;
     installed = true;
@@ -520,7 +605,9 @@ export function findInRegistry(test) {
         try { const o = f[META]?.original ?? f; src = isForeignWrapper(o) ? String(o.toString()) : fnToString.call(o); } catch { return; }
         if (test(src, id)) out.push([id, f]);
     };
-    if (runtime.registry) for (const [id, f] of runtime.registry) consider(id, f);
+    const reg = runtime.registry;
+    if (reg instanceof Map || reg instanceof W.Map) for (const [id, f] of reg) consider(id, f);
+    else if (reg && typeof reg === "object") for (const id of Object.keys(reg)) consider(isNaN(+id) ? id : +id, reg[id]);
     for (const [id, f] of factories) consider(id, f);
     return out;
 }
@@ -545,7 +632,32 @@ export function patchReport() {
         results: patchResults.slice(),
         orphaned,
         pending,
+        // 已停用插件的补丁只校验不应用(开发构建):find 命中了但 match 失配的
+        validateMisses: checkOnlyMismatches.slice(),
+        ...(IS_DEV ? { timings: patchTimings() } : {}),
     };
+}
+
+/** 每条补丁 find 的累计耗时(开发构建),从慢到快 */
+export function patchTimings() {
+    return patches.filter(p => p.ms != null).map(p => ({ plugin: p.plugin, find: describeFind(p.rawFind), ms: Math.round(p.ms * 100) / 100 })).sort((a, b) => b.ms - a.ms);
+}
+
+/**
+ * 在隔离的作用域里执行一个分块文件的文本,只收集它交给 TURBOPACK.push 的参数,不注册、不执行任何模块(补丁检查器用)。
+ * 和补丁后的模块一样经 compile 编译,兼容严格 CSP。
+ */
+export function evaluateChunk(text) {
+    const pushes = [];
+    const sink = { push: (...cs) => { pushes.push(...cs); return pushes.length; } };
+    const fake = new Proxy({ TURBOPACK: sink }, {
+        get: (t, k) => (k in t ? t[k] : undefined),
+        set: (t, k, v) => { t[k] = v; return true; },
+    });
+    const fn = compile("check-chunk", `function(globalThis,self,window,document,TURBOPACK){${text}\n}`);
+    fn.call(fake, fake, fake, fake, { currentScript: null }, sink);
+    if (Array.isArray(fake.TURBOPACK)) pushes.push(...fake.TURBOPACK);
+    return pushes;
 }
 
 export function logHealthReport() {
@@ -556,6 +668,10 @@ export function logHealthReport() {
     if (patchStats.applied === 0 && (orphaned.length || noEffect)) logger.warn("本次没有任何补丁生效,站点构建很可能已变化");
     if (IS_DEV && checkOnlyMismatches.length) {
         logger.warn("已禁用插件中失配的补丁:", checkOnlyMismatches);
+    }
+    if (IS_DEV) {
+        const slow = patchTimings().filter(t => t.ms >= 5).slice(0, 5);
+        if (slow.length) logger.debug(`最慢的 find:${slow.map(t => `${t.plugin} ${t.ms}ms`).join(",")}`);
     }
     logger.info(`补丁统计:applied ${patchStats.applied},bypassed ${patchStats.bypassed},noEffect ${patchStats.noEffect},errors ${patchStats.errors},运行时回退 ${patchStats.runtimeFallbacks},被补丁模块 ${patchStats.patchedModules.size}`);
 }
