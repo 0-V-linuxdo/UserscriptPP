@@ -24,9 +24,25 @@ w.GM_unregisterMenuCommand = id => { if (menus[id - 1]) menus[id - 1].removed = 
 // 本脚本的 GM 数据里有已不在这条脚本里的插件的数据:启动后清理
 // 本次构建里没有的插件:GrokChatBar 没有记录(这次开始计时、保留),SomeGrokPlugin 91 天前最后见到(删除)
 store.set("UserscriptPPSettings", { plugins: { GrokChatBar: { enabled: true }, SomeGrokPlugin: { enabled: true, x: 1 }, Settings: { pluginsLastSeen: { SomeGrokPlugin: Date.now() - 91 * 864e5 } } } });
+if (process.env.MERGE_CASE) {
+    // 三处副本合并:GM 和站点存储里各放一份,看启动后以哪份为准
+    const c = JSON.parse(process.env.MERGE_CASE);
+    store.clear();
+    if (c.gm) store.set("UserscriptPPSettings", c.gm);
+    if (c.ls) w.localStorage.setItem(SK, JSON.stringify(c.ls));
+}
 w.eval(bundle);
+if (process.env.MERGE_CASE) {
+    setTimeout(() => {
+        const B = w[KEY].api.PlainSettings.plugins.Settings;
+        console.log(JSON.stringify({ starred: B.starredPlugins ?? null, extra: B.mergeProbe ?? null, savedAtLeaked: "$savedAt" in w[KEY].api.PlainSettings }, null, 1));
+        console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
+        console.log("LOGS:");
+        process.exit(0);
+    }, 300);
+}
 const liveMenus = () => menus.filter(m => !m.removed).map(m => m.name);
-(async () => {
+if (!process.env.MERGE_CASE) (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(300);
     if (process.env.BRIDGE_ONLY) {

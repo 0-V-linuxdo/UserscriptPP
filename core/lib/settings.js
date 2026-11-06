@@ -136,6 +136,10 @@ function reviver(_, v) {
 export const serialize = obj => JSON.stringify(obj, replacer);
 
 /** 接受对象、JSON 字符串、二次编码的 JSON 字符串 */
+/** 每份存下来的设置带一个保存时间(毫秒);读到几份副本时以最新的为准 */
+const SAVED_AT = "$savedAt";
+export const savedAtOf = data => (data && Number(data[SAVED_AT])) || 0;
+
 export function parseStored(raw) {
     try {
         let v = raw;
@@ -143,6 +147,10 @@ export function parseStored(raw) {
         if (v && typeof v === "object" && !Array.isArray(v)) {
             // 对象形式也要还原 bigint
             v = JSON.parse(JSON.stringify(v), reviver);
+            // 保存时间戳不算设置:挪到不可枚举的属性上,合并、同步、导出都看不到它
+            const at = Number(v[SAVED_AT]) || 0;
+            delete v[SAVED_AT];
+            Object.defineProperty(v, SAVED_AT, { value: at, enumerable: false, configurable: true });
             if (v.plugins && typeof v.plugins === "object" && Object.keys(v.plugins).length > 0) return v;
         }
     } catch { /* 视为没有 */ }
@@ -204,6 +212,23 @@ function mergeMissing(into, from) {
     return into;
 }
 
+/** 同步读取时读到的那份(副本);异步读取挑出更新的一份时,内存里从它来的内容不再补回去 */
+let syncBase = null;
+
+/** 去掉 from 里和 base 相同的部分,剩下就绪前真正新产生的内容 */
+function withoutSame(from, base) {
+    if (!base || typeof base !== "object") return from;
+    for (const k of Object.keys(from)) {
+        if (!(k in base)) continue;
+        const a = from[k], b = base[k];
+        if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+            withoutSame(a, b);
+            if (Object.keys(a).length === 0) delete from[k];
+        } else if (JSON.stringify(a, replacer) === JSON.stringify(b, replacer)) delete from[k];
+    }
+    return from;
+}
+
 /** document-start 同步读取:只在 GM_getValue 同步返回有效数据时使用 */
 export function loadSync() {
     if (!GM.get) return false;
@@ -212,6 +237,7 @@ export function loadSync() {
         if (raw && typeof raw.then === "function") return false;
         const data = parseStored(raw);
         if (data) {
+            syncBase = JSON.parse(serialize(data), reviver);
             replaceContents(data);
             return true;
         }
@@ -252,19 +278,23 @@ export async function loadAsync() {
     for (const [name, read] of sources) {
         try {
             const data = parseStored(await read());
-            if (data) found.push({ name, data, score: richness(data) });
+            if (data) found.push({ name, data, at: savedAtOf(data), score: richness(data) });
         } catch (e) {
             logger.debug(`从 ${name} 读取失败`, e);
         }
     }
     if (found.length) {
-        // 最丰富的一份为主,其余副本只补缺
-        found.sort((a, b) => b.score - a.score);
+        // 带保存时间的副本里最新的一份为主:它就是最后一次保存的完整设置,其余较旧的副本不再往里补,
+        // 不然在别处删掉的设置会被旧副本带回来。旧版本存的副本没有保存时间:排在后面,
+        // 全都没有时按旧办法,最丰富的一份为主、其余只补缺(卸载脚本清空 GM 后从站点存储救回)
+        found.sort((a, b) => (b.at - a.at) || (b.score - a.score));
         const data = found[0].data;
-        for (const f of found.slice(1)) fillFrom(data, f.data);
-        const memory = JSON.parse(serialize(PlainSettings), reviver);
+        if (!found[0].at) for (const f of found.slice(1)) fillFrom(data, f.data);
+        // 就绪前内存里新产生的(插件默认值、早期写入)补进去;同步读取时从(可能较旧的)GM 副本带进来的不补
+        const memory = withoutSame(JSON.parse(serialize(PlainSettings), reviver), syncBase);
+        syncBase = null;
         replaceContents(mergeMissing(data, memory));
-        logger.info(`设置已从 ${found.map(f => f.name).join(" + ")} 读取`);
+        logger.info(`设置已从 ${found[0].at ? found[0].name : found.map(f => f.name).join(" + ")} 读取`);
     }
     ready = true;
     // 启动过程不落盘:只有之后真正改了设置才写
@@ -362,7 +392,7 @@ export async function saveNow() {
     if (!ready) return;
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
     let json;
-    try { json = serialize(PlainSettings); } catch (e) { logger.warn("设置序列化失败", e); return; }
+    try { json = serialize({ ...PlainSettings, [SAVED_AT]: Date.now() }); } catch (e) { logger.warn("设置序列化失败", e); return; }
     dirty.clear();
     pendingSave = false;
     // 三处都写:卸载脚本清空 GM 存储后,还能从站点存储救回

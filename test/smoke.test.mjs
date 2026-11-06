@@ -367,6 +367,26 @@ test("安全模式:站点就绪后 10 秒内关页面不算没完成的启动", 
     assert.equal(data.boot.pending, 0);
 });
 
+test("设置副本合并:以最后保存的一份为准,删掉的设置不会被旧副本带回来", () => {
+    const url = "http://localhost:8080/uspp-example/index.html";
+    const merge = c => {
+        const { data, errors } = runSite(bundle, url, "example", { MERGE_CASE: JSON.stringify(c) });
+        assert.equal(errors, "none");
+        return data;
+    };
+    const full = { plugins: { Settings: { starredPlugins: ["A", "B", "C"], mergeProbe: "old" } } };
+    const trimmed = { plugins: { Settings: { starredPlugins: ["A"] } } };
+    // GM 是新存的(删了两项和 mergeProbe),站点存储是旧的、内容更多:以 GM 为准,删掉的不回来
+    assert.deepEqual(merge({ gm: { ...trimmed, $savedAt: 2000 }, ls: { ...full, $savedAt: 1000 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
+    // 反过来站点存储较新:以站点存储为准
+    assert.deepEqual(merge({ gm: { ...full, $savedAt: 1000 }, ls: { ...trimmed, $savedAt: 2000 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
+    // 旧版本存的副本没有时间戳:有时间戳的优先
+    assert.deepEqual(merge({ gm: trimmed, ls: { ...full, $savedAt: 1 } }), { starred: ["A", "B", "C"], extra: "old", savedAtLeaked: false });
+    assert.deepEqual(merge({ gm: full, ls: { ...trimmed, $savedAt: 1 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
+    // 都没有时间戳(升级前):沿用旧办法,最丰富的为主、其余补缺
+    assert.deepEqual(merge({ gm: trimmed, ls: full }), { starred: ["A", "B", "C"], extra: "old", savedAtLeaked: false });
+});
+
 test("冒烟:示例站点(开发构建)", () => {
     const { data, errors, logs } = runSite(bundle, "http://localhost:8080/uspp-example/index.html");
     assert.equal(errors, "none");
