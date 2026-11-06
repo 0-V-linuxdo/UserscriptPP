@@ -662,12 +662,14 @@ export function evaluateChunk(text) {
     return pushes;
 }
 
+/** 打印补丁健康报告;返回 { siteChanged }:一条补丁都没生效、且有失配时为 true(站点构建很可能已变化) */
 export function logHealthReport() {
     const { orphaned } = buildReport();
-    if (replacedByOther || yieldedTo) { logger.info(`补丁统计:${yieldedTo ? "TURBOPACK 让给了先装的脚本" : "TURBOPACK 已被其他脚本接管"},${patchStats.bypassed} 条补丁记为 bypassed,依赖它的功能改用渲染兜底或停用`); return; }
+    if (replacedByOther || yieldedTo) { logger.info(`补丁统计:${yieldedTo ? "TURBOPACK 让给了先装的脚本" : "TURBOPACK 已被其他脚本接管"},${patchStats.bypassed} 条补丁记为 bypassed,依赖它的功能改用渲染兜底或停用`); return { siteChanged: false }; }
     if (orphaned.length) logger.warn(`以下补丁找不到对应模块(孤儿):\n${orphaned.join("\n")}`);
     const noEffect = patchResults.some(r => r.replacements.some(s => s.status === "noEffect"));
-    if (patchStats.applied === 0 && (orphaned.length || noEffect)) logger.warn("本次没有任何补丁生效,站点构建很可能已变化");
+    const siteChanged = patchStats.applied === 0 && (orphaned.length > 0 || noEffect);
+    if (siteChanged) logger.warn("本次没有任何补丁生效,站点构建很可能已变化");
     if (__USPP_DEV__ && checkOnlyMismatches.length) {
         logger.warn("已禁用插件中失配的补丁:", checkOnlyMismatches);
     }
@@ -676,6 +678,7 @@ export function logHealthReport() {
         if (slow.length) logger.debug(`最慢的 find:${slow.map(t => `${t.plugin} ${t.ms}ms`).join(",")}`);
     }
     logger.info(`补丁统计:applied ${patchStats.applied},bypassed ${patchStats.bypassed},noEffect ${patchStats.noEffect},errors ${patchStats.errors},运行时回退 ${patchStats.runtimeFallbacks},被补丁模块 ${patchStats.patchedModules.size}`);
+    return { siteChanged };
 }
 
 // ---------- 守护 ----------

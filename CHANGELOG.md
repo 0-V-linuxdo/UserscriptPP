@@ -8,6 +8,10 @@
 - 开发构建内联 sourcemap:报错位置和断点对应回站点、插件的源文件(DevTools 里在 `uspp-src:///<脚本 ID>/` 下);热重载推来的插件代码也带 sourcemap。
 - 记录每个插件的启动耗时(`plugins.<名>.startMs`):Plugins 页卡片上标出启动超过 10 ms 的插件,诊断信息里列出最慢的 5 个。
 - 新命令 "Report a problem":配了 `supportURL` 时出现;GitHub 仓库直接打开填好诊断信息的新建 Issue 页,其他地址打开并把诊断信息复制到剪贴板。只打开页面,不上传任何东西。
+- 外部请求白名单:`fetchExternal` 只能访问脚本 `@connect` 里的主机,拦下的请求列在诊断信息里;插件可声明 `connect`,构建时自动收进 `@connect`,运行时这个插件的 `ctx.fetchExternal` 也只能访问这些主机。
+- 站点改版提醒:构建指纹变了,或补丁一条都没生效且有失效的,提示用户 "<站点> has changed"(每个版本只提示一次,配了 `supportURL` 时可一键报告问题);CI 每周线上检查失败时自动开 Issue。
+- 元数据头写 `@license`(缺省 `GPL-3.0-or-later`,`userscript.json` 的 `license` 可改)。
+- 框架界面放进 Shadow DOM,站点的宽泛样式不再影响设置面板;站点可写 `uiShadow: false` 关掉。
 
 ## 0.1.0 - 2026-11-06
 

@@ -70,6 +70,7 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.subs, { tier: "SUBSCRIPTION_TIER_SUPER_GROK_PRO", name: "SuperGrok Pro", subscribed: true, x: false, active: 1 });
         assert.equal(data.importedCss, "imported{}");
         assert.equal(data.bodyHasOwnRoot, true);
+        assert.equal(data.uiInShadow, true, "框架界面应放在 Shadow DOM 里");
         assert.deepEqual(data.loaded, { starred: ["Thick"], thick: true });
         assert.deepEqual(data.menus, ["Grok Reference (Userscript++) settings", "Grok Reference (Userscript++): search…", "Grok Reference (Userscript++): reload in safe mode"]);
         assert.deepEqual(data.crossTab, { pinned: ["RemotePin"], css: "local{}", notified: 1 });
@@ -851,4 +852,35 @@ test("报告问题:GitHub 仓库直接打开填好诊断信息的新建 Issue �
     assert.equal(long.copied, true);
     assert.ok(long.url.length <= 7000);
     assert.deepEqual(reportIssueTarget("https://example.com/help", "x"), { url: "https://example.com/help", copied: true, truncated: false });
+});
+
+test("外部请求白名单:和 @connect 同样的匹配规则,插件声明了 connect 时只能访问这些主机", async () => {
+    const { hostAllowed, fetchExternalFor, blockedRequests } = await importCore("core/lib/net.js");
+    assert.equal(hostAllowed("api.example", ["other.example"]), false);
+    assert.equal(hostAllowed("api.example.com", ["example.com"]), true);
+    assert.equal(hostAllowed("example.com", ["example.com"]), true);
+    assert.equal(hostAllowed("evil-example.com", ["example.com"]), false);
+    assert.equal(hostAllowed("any.host", ["*"]), true);
+    assert.equal(hostAllowed("a.b", []), false);
+    // 不经构建时脚本级列表是 "*";插件只声明了 a.example
+    const f = fetchExternalFor("P", ["a.example"]);
+    await assert.rejects(f("https://b.example/x"), /Request blocked: b\.example is not in P's declared hosts/);
+    await assert.rejects(f("ftp://a.example/x"), /only http\(s\)/);
+    assert.ok(blockedRequests().some(r => r.host === "b.example" && r.plugin === "P"));
+});
+
+test("@license 缺省 GPL-3.0-or-later;插件声明的 connect 写进 @connect", () => {
+    const repo = tmp("uspp-lic-");
+    const dir = join(repo, "sites", "example");
+    cpSync(join(root, "sites/example.dev"), dir, { recursive: true });
+    writeFileSync(join(dir, "userscript.json"), JSON.stringify({ id: "lic", name: "L", namespace: "x:lic", match: ["*://l.example/*"] }));
+    const p = join(dir, "plugins", "ExampleHello", "index.js");
+    writeFileSync(p, readFileSync(p, "utf8").replace('name: "ExampleHello",', 'name: "ExampleHello",\n        connect: ["api.plugin.example"],'));
+    build("--site-dir", dir, "--out", join(repo, "dist"));
+    const head = readFileSync(join(repo, "dist", "lic.meta.js"), "utf8");
+    assert.match(head, /@license\s+GPL-3\.0-or-later\n/);
+    assert.deepEqual([...head.matchAll(/@connect\s+(\S+)/g)].map(m => m[1]), ["api.plugin.example"]);
+    writeFileSync(join(dir, "userscript.json"), JSON.stringify({ id: "lic", name: "L", namespace: "x:lic", match: ["*://l.example/*"], license: "GPL-3.0-only" }));
+    build("--site-dir", dir, "--out", join(repo, "dist"));
+    assert.match(readFileSync(join(repo, "dist", "lic.meta.js"), "utf8"), /@license\s+GPL-3\.0-only\n/);
 });

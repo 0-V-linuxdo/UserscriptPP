@@ -1,3 +1,4 @@
+const uiOf = (d, tag) => { const h = d.querySelector(tag); const sr = h?.shadowRoot; return sr ? (sr.querySelector(`[class$="shadow-mount"]`) ?? sr) : h; };
 // 同一页面两条基于框架的站点脚本(各自带一份核心):互不影响
 // 用法:node multi.cjs <脚本A> <IDA> <脚本B> <IDB>
 // 每条脚本在脚本管理器里有自己的 GM 存储和菜单,这里用函数参数给每条脚本一套独立的 GM 替身
@@ -101,8 +102,8 @@ const live = gm => gm.menus.filter(m => !m.removed).map(m => m.name);
         roots: [...w.document.querySelectorAll("*")].map(e => e.tagName.toLowerCase()).filter(t => /^uspp-/.test(t)).filter((t, i, a) => a.indexOf(t) === i).sort(),
         aToast: w.document.querySelector(`uspp-${idA}-toasts`)?.shadowRoot.textContent,
         bToast: w.document.querySelector(`uspp-${idB}-toasts`)?.shadowRoot.textContent,
-        aPanel: !!w.document.querySelector(`uspp-${idA}-root`)?.textContent.includes("Plugins"),
-        bPanel: !!w.document.querySelector(`uspp-${idB}-root`)?.textContent.includes("Plugins"),
+        aPanel: !!uiOf(w.document, `uspp-${idA}-root`)?.textContent.includes("Plugins"),
+        bPanel: !!uiOf(w.document, `uspp-${idB}-root`)?.textContent.includes("Plugins"),
     };
     A.closeAllModals();
     // 关掉 A 的插件不影响 B

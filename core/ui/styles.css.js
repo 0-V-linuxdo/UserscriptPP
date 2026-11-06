@@ -7,7 +7,8 @@ export const UI_CSS = `
 :root[data-uspp-theme="dark"] { ${DARK} }
 uspp-root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 uspp-root { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; }
-uspp-root > * { pointer-events: auto; }
+uspp-root > *, .uspp-shadow-mount > * { pointer-events: auto; }
+.uspp-shadow-mount { display: contents; }
 .uspp-overlay { position: fixed; inset: 0; background: rgb(0 0 0 / 0.5); display: flex; align-items: center; justify-content: center; padding: 16px; pointer-events: auto; animation: uspp-fade .12s ease-out; }
 .uspp-modal { position: relative; background: var(--uspp-surface-l1); color: var(--uspp-fg-primary); border: 1px solid var(--uspp-border-l1); border-radius: 24px; box-shadow: 0 16px 48px rgb(0 0 0 / .35); width: min(560px, 100%); max-height: min(85vh, 760px); display: flex; flex-direction: column; overflow: hidden; font-size: 14px; animation: uspp-pop .14s ease-out; }
 .uspp-modal-header { padding: 20px 56px 8px 24px; }

@@ -136,6 +136,8 @@ function PluginCard({ p, tracker }) {
         ],
         footer: [
             h("span", { key: "a", className: "uspp-card-authors" }, (p.authors || []).join(", ") || "\u00A0"),
+            // 插件声明会访问的外部主机,用户在卡片上就能看到
+            Array.isArray(p.connect) && p.connect.length > 0 && h("span", { key: "c", className: "uspp-card-timing", title: `This plugin can send requests to: ${p.connect.join(", ")}` }, `Connects to ${p.connect.length > 2 ? `${p.connect.slice(0, 2).join(", ")} +${p.connect.length - 2}` : p.connect.join(", ")}`),
             // 启动较慢(>= 10 ms)的插件在卡片上标出启动耗时,排查页面变卡时一眼能看到
             p.started && p.startMs >= SLOW_START_MS && h("span", { key: "t", className: "uspp-card-timing", title: "Time this plugin took to start on this page" }, `${p.startMs} ms`),
             MULTI_SITE && h("span", { key: "s", className: "uspp-site-badge", "data-uspp-plugin-site": p.site ?? "*" }, pluginSiteLabel(p)),

@@ -88,12 +88,39 @@ function sync(name) {
     if (s.el.textContent !== s.css) s.el.textContent = s.css;
 }
 
+// ---------- 框架界面的 Shadow DOM ----------
+// 界面根放在 Shadow DOM 里时,本系统登记的样式(界面样式、插件样式、主题、Quick CSS)同样放进去一份;页面自己的样式进不去
+const shadows = new Set();
+function syncShadows() {
+    if (!shadows.size) return;
+    const enabled = [...styles.entries()].filter(([, s]) => s.enabled);
+    for (const sr of shadows) {
+        if (!sr.host?.isConnected) continue;
+        if (useSheets()) {
+            for (const [name, s] of enabled) if (!s.sheet) { s.sheet = new CSSStyleSheet(); ourSheets.add(s.sheet); try { s.sheet.replaceSync(s.css); s.sheetCss = s.css; } catch (e) { logger.warn(`样式 ${name} 解析失败`, e); } }
+            sr.adoptedStyleSheets = enabled.map(([, s]) => s.sheet).filter(Boolean);
+        } else {
+            let el = sr.querySelector("style[data-uspp-shadow]");
+            if (!el) { el = document.createElement("style"); el.setAttribute("data-uspp-shadow", ""); sr.prepend(el); }
+            const css = enabled.map(([, s]) => s.css).join("\n");
+            if (el.textContent !== css) el.textContent = css;
+        }
+    }
+}
+/** 把一个 shadow root 登记为样式目标;返回撤销函数 */
+export function attachShadowStyles(sr) {
+    shadows.add(sr);
+    syncShadows();
+    return () => shadows.delete(sr);
+}
+
 export function registerStyle(name, css, enabled = true) {
     const s = styles.get(name);
     if (s) { s.css = css; if (enabled) s.enabled = true; }
     else styles.set(name, { css, enabled, el: null });
     if (!useSheets() && container && !container.isConnected) { container = null; rebuild(); }
     else sync(name);
+    syncShadows();
 }
 
 export function enableStyle(name) {
@@ -102,6 +129,7 @@ export function enableStyle(name) {
     if (s.enabled) return false;
     s.enabled = true;
     sync(name);
+    syncShadows();
     return true;
 }
 
@@ -112,6 +140,7 @@ export function disableStyle(name) {
     s.el?.remove();
     s.el = null;
     if (useSheets()) syncSheet(name);
+    syncShadows();
     return true;
 }
 
@@ -121,6 +150,7 @@ export function unregisterStyle(name) {
     s.el?.remove();
     styles.delete(name);
     if (useSheets()) syncSheet(null);
+    syncShadows();
     return true;
 }
 

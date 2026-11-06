@@ -1,3 +1,4 @@
+const uiOf = (d, tag) => { const h = d.querySelector(tag); const sr = h?.shadowRoot; return sr ? (sr.querySelector(`[class$="shadow-mount"]`) ?? sr) : h; };
 // 其他网站冒烟:通用站点只有核心,不碰打包器,不往网站存储写设置;另测运行时注册站点(F4)和示例站点
 // 用法:node site.cjs <脚本> <网址>;USPP_ID=<脚本 ID>
 const { JSDOM } = require("jsdom");
@@ -80,7 +81,7 @@ if (!process.env.MERGE_CASE) (async () => {
     // 菜单命令打开框架设置面板
     menus[0]?.fn();
     await sleep(50);
-    out.panel = w.document.querySelector(`${px}root`)?.textContent.slice(0, 300) ?? null;
+    out.panel = uiOf(w.document, `${px}root`)?.textContent.slice(0, 300) ?? null;
     P.closeAllModals();
     P.showToast("hello");
     out.toast = w.document.querySelector(`${px}toasts`)?.shadowRoot.textContent;
@@ -95,13 +96,13 @@ if (!process.env.MERGE_CASE) (async () => {
         }));
         P.startPlugin("NewsProbe");
         await sleep(50);
-        const btn = [...w.document.querySelectorAll(`${px}root button`)].find(b => b.textContent.includes("NewsBtn"));
+        const btn = [...(uiOf(w.document, `${px}root`)?.querySelectorAll(`button`) ?? [])].find(b => b.textContent.includes("NewsBtn"));
         btn?.click();
         menus.find(m => m.name === "News cmd" && !m.removed)?.fn();
         out.f4 = { site: P.plugins.NewsProbe?.site, button: !!btn, menu: liveMenus().includes("News cmd"), clicks };
         P.stopPlugin("NewsProbe");
         await sleep(50);
-        out.f4.after = { button: [...w.document.querySelectorAll(`${px}root button`)].some(b => b.textContent.includes("NewsBtn")), menu: liveMenus().includes("News cmd") };
+        out.f4.after = { button: [...(uiOf(w.document, `${px}root`)?.querySelectorAll(`button`) ?? [])].some(b => b.textContent.includes("NewsBtn")), menu: liveMenus().includes("News cmd") };
     }
     if (P.site.id === "example") {
         await sleep(200);

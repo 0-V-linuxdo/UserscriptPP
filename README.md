@@ -17,7 +17,7 @@
 | 页面接入工具 | `core/lib/` | Turbopack / webpack 驱动(拦截、补丁、模块查找)、方法补丁器、网络改写、DOM 工具(共用一个 MutationObserver、幂等写入、自身写入不触发自身)、路由变化、网络旁路(只读复制的响应)、React fiber 和 JSX 渲染钩子 |
 | 构建工具 | `scripts/build.mjs` | 把核心、站点适配和插件打成一条站点脚本,元数据头全部来自脚本配置;打进 `CHANGELOG.md`;支持 TS / JSX;`--watch` 监视重建,`--hot` 单插件热重载,`--channel` 发布渠道 |
 | 脚手架 | `scripts/create.mjs` | 生成站点目录和插件目录的起步文件 |
-| CI | `.github/workflows/ci.yml` | 测试、构建、补丁静态检查;每周线上检查补丁 |
+| CI | `.github/workflows/ci.yml` | 测试、构建、补丁静态检查;每周线上检查补丁,失效时自动开(或追加到已有的)带 `site-changed` 标签的 Issue |
 | 补丁检查器 | `scripts/check-patches.mjs` | 静态检查补丁写法;拉取线上页面和全部分块(含懒加载分块)逐条测试补丁,可放进 CI |
 | 类型声明 | `types/index.d.ts` | 工厂参数 `U` 的完整类型,JS 里用 JSDoc 也能补全 |
 | 模板 / 示例 | `sites/` | `example.dev`(最小模板)、`grok`(用打包器驱动的完整示例) |
@@ -57,7 +57,8 @@
    | `updateBase` | 更新地址前缀;写了才有 `@updateURL`(`<前缀><文件名>.meta.js`)和 `@downloadURL`(`<前缀><文件名>.user.js`),不写就没有更新行 |
    | `fileName` | 产物文件名,缺省为脚本 ID |
    | `match` / `excludeMatch` | 缺省取站点定义的 `matches` / `excludeMatches` |
-   | `grants` / `connect` / `require` / `resource` | `@grant` 由构建按产物自动推导(扫描用到的 `GM_xxx`,含插件的);`grants` 只用来追加扫描不到的,例如 `GM.getValue` 这类异步接口和 `window.close`。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机 |
+   | `grants` / `connect` / `require` / `resource` | `@grant` 由构建按产物自动推导(扫描用到的 `GM_xxx`,含插件的);`grants` 只用来追加扫描不到的,例如 `GM.getValue` 这类异步接口和 `window.close`。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机。运行时 `U.fetchExternal` / `ctx.fetchExternal` 按同一份列表再把一道关(各脚本管理器对 `@connect` 的执行尺度不一),拦下的请求列在诊断信息里;插件定义里写 `connect: ["api.example"]` 时,这些主机由构建自动收进 `@connect`,这个插件的 `ctx.fetchExternal` 也只能访问它们 |
+   | `license` | 写进 `@license`,缺省 `GPL-3.0-or-later`;写了不兼容 GPL 的许可证时构建会提示(见"许可证") |
    | `themeHosts` | 在线主题允许从哪些主机取 CSS(写进 `@connect`);不在列表里的地址,Themes 页会说明原因。脚手架生成的配置里带了几个常见主机 |
    | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉。`window[Symbol.for("uspp:<ID>")]` 上只有页面桥(补丁里 `$self` 用的门面),不是完整接口 |
    | `globalInProduction` | 为 `true` 时发布构建也挂调试名。调试名上是完整接口,网站自己的脚本也能拿到,发布版不建议打开 |
@@ -78,7 +79,9 @@
    });
    ```
 
-   可选字段还有 `excludeMatches`、`settingsHost`(把框架设置页嵌进站点设置界面,见 `sites/grok/settings-host.js`)、`components`(站点原生组件,核心界面优先用)、`renderer()`(站点自己的 React,返回 `{ React, createRoot, createPortal }`;不提供时核心用内置的 Preact)、`common`(公共件,挂到 `U.sites.<id>.common`)、`api`(旧接口名别名)、`pluginAliases`(把插件的旧字段映射到注入点)、`routeInfo(url)`(路由事件里附带的站点语义)、`network: true` / `route: true`(在 document-start 就装好网络旁路 / 路由监听)、`styleHost: "element"`(样式放进 `<head>` 而不是可构造样式表)。
+   可选字段还有 `excludeMatches`、`settingsHost`(把框架设置页嵌进站点设置界面,见 `sites/grok/settings-host.js`)、`components`(站点原生组件,核心界面优先用)、`renderer()`(站点自己的 React,返回 `{ React, createRoot, createPortal }`;不提供时核心用内置的 Preact)、`common`(公共件,挂到 `U.sites.<id>.common`)、`api`(旧接口名别名)、`pluginAliases`(把插件的旧字段映射到注入点)、`routeInfo(url)`(路由事件里附带的站点语义)、`network: true` / `route: true`(在 document-start 就装好网络旁路 / 路由监听)、`styleHost: "element"`(样式放进 `<head>` 而不是可构造样式表)、`uiShadow: false`(框架界面不放进 Shadow DOM)。
+
+   框架界面(设置面板、弹窗、通知)缺省放在 `<uspp-root>` 的 Shadow DOM 里,站点的 `button {}`、`* {}` 这类宽泛规则进不来;本系统登记的样式(界面样式、插件样式、主题、Quick CSS)会同步进去一份。要让站点样式作用到框架界面上时写 `uiShadow: false`。
 
 4. **声明并挂注入点**:在 `start()` 里用 `U.onSlotChange("toolbar", 重画)` 监听,重画时用 `U.getSlotItems("toolbar")` 取内容,用 `U.mount` / `U.setAttr` / `U.setText` 写 DOM(这些写入不会触发你自己的 `U.observe` 回调,值不变时不写)。站点改版找不到位置时什么都不做。核心自带的注入点 `menuCommand`(脚本管理器菜单)、`floating`(悬浮按钮区)、`settings.pluginActions`(插件卡片上的按钮)在任何站点都能用。
 
@@ -164,6 +167,7 @@ Grok 示例里保留旧名(只在带它的构建里有):`common`、`addChatBarBu
 | `U.patchMethod(对象, 方法名, { before, instead, after })` / `ctx.patch` | 给任意对象的方法加钩子。`before` 可改参数、返回 `false` 跳过原方法;`instead(args, next)` 替换调用;`after` 返回非 `undefined` 时替换结果。只在已有方法外包一层;撤销时对象上的方法还是本层才还原,否则留作透传 |
 | `rewriteRequest(匹配, 处理)` / `rewriteResponse` | 改写 `fetch` / XHR:返回 `{ url, init, body }` 改请求,`{ block: true }` 拦掉(fetch 抛 TypeError),返回 `Response` 直接作答;`makeResponse(内容)` 造响应。只在有改写匹配时才走异步路径;XHR 只支持同步处理 |
 | `onWebSocket(匹配, { open, send, message })` / `onEventSource` | 观察和改写 WebSocket / EventSource 的收发 |
+| `ctx.fetchExternal(地址)` | 跨域取数据(走 `GM_xmlhttpRequest`,返回标准 `Response`)。主机要在脚本的 `@connect` 里;插件定义写了 `connect` 时还要在其中,否则拒绝并说明原因 |
 | `ctx.data` / `U.DataStore.for(名字)` | 插件数据(缓存、历史这类大块数据):`get` / `set` / `del` / `keys` / `clear`,存在当前网站的 IndexedDB;`.global` 存在 GM 存储里跨网站共享。备份页可选"包含插件数据" |
 | 设置项 `isValid` / `disabled` / `hidden` | 设置对话框里校验(不通过时不保存并显示原因)和灰显;`plugin.about` 组件显示在预览上方 |
 | 渲染型注入点、`U.renderSlot(注入点, 容器)`、`SlotOutlet` | 插件往注入点放 `render` 组件,每项各自有错误边界;Grok 示例有 `messageAccessory`(回答下方)和 `messageToolbar` |

@@ -1,3 +1,4 @@
+const uiOf = (d, tag) => { const h = d.querySelector(tag); const sr = h?.shadowRoot; return sr ? (sr.querySelector(`[class$="shadow-mount"]`) ?? sr) : h; };
 // 热重载冒烟:加载 --hot 开发构建,GM_xmlhttpRequest 接到本机的热重载服务;父进程改文件,这里看页面上的变化
 // 输出:READY(已连上) / REPLACED(插件已原地替换) / 最后一行 JSON 结果
 const { JSDOM } = require("jsdom");
@@ -52,7 +53,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     out.started = U.plugins.ExampleTsx.started;
     out.toast = [...doc.querySelectorAll(`${px}toasts`)].some(t => t.shadowRoot?.textContent.includes("Reloaded ExampleTsx"));
     console.log("REPLACED");
-    out.full = await waitFor(() => (doc.querySelector(`${px}root`)?.textContent ?? "").includes("Dev build rebuilt"));
+    out.full = await waitFor(() => (uiOf(doc, `${px}root`)?.textContent ?? "").includes("Dev build rebuilt"));
     out.errors = errors;
     out.logs = logs.filter(l => /^\[(warn|error)\]/.test(l));
     console.log(JSON.stringify(out));

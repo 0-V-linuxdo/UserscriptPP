@@ -46,6 +46,9 @@ const VERSION = process.env.USPP_VERSION || `${d.getUTCFullYear()}${pad(d.getUTC
 // @grant 按产物自动推导:扫描打包结果里出现的 GM_xxx,脚本管理器认得的就写进去(核心、站点、插件用到什么写什么)。
 // unsafeWindow 总是需要;GM.xxx(异步接口)、window.close 等扫描不到的,在 userscript.json 的 grants 里手动加
 const BASE_GRANTS = ["unsafeWindow"];
+const DEFAULT_LICENSE = "GPL-3.0-or-later";
+/** 打包了 GPL-3.0 核心的脚本整体要以 GPL-3.0(或 AGPL-3.0)发布;别的写法只提示,不拦构建 */
+const gplCompatible = lic => /\b(A?GPL-3\.0)(-only|-or-later|\+)?\b/i.test(String(lic));
 const KNOWN_GRANTS = new Set([
     "GM_addElement", "GM_addStyle", "GM_addValueChangeListener", "GM_audio", "GM_cookie", "GM_deleteValue", "GM_deleteValues", "GM_download",
     "GM_getResourceText", "GM_getResourceURL", "GM_getTab", "GM_getTabs", "GM_getValue", "GM_getValues", "GM_info", "GM_listValues", "GM_log",
@@ -102,13 +105,33 @@ async function readSiteMeta(entry) {
     return def;
 }
 
+/**
+ * 插件声明的 connect(会访问的主机):在 Node 里用替身接口执行一次插件工厂,只读 connect 字段,汇总进 @connect。
+ * 插件在工厂里碰了页面对象等读不出来时只提示,开发者可以把主机写进 userscript.json 的 connect。
+ */
+const deepStub = new Proxy(function () {}, { get: (_, k) => (k === Symbol.toPrimitive ? () => "" : k === "then" ? undefined : deepStub), apply: () => deepStub, construct: () => deepStub });
+async function readPluginConnect(entry) {
+    try {
+        const mod = await import(await nodeLoadable(entry) + (WATCH ? `?v=${++importSeq}` : ""));
+        const U = new Proxy({ definePlugin: x => x, definePluginSettings: () => ({ store: deepStub, def: {} }) }, { get: (t, k) => (k in t ? t[k] : deepStub) });
+        const def = typeof mod.default === "function" ? mod.default(U) : mod.default;
+        const c = def && typeof def === "object" ? def.connect : undefined;
+        return Array.isArray(c) ? c.map(String).filter(Boolean) : [];
+    } catch (e) {
+        if (/\bconnect\s*:/.test(readFileSync(entry, "utf8"))) console.warn(`  提示:没能在构建时读取 ${relative(process.cwd(), entry)} 的 connect(${e.message}),请把这些主机写进 userscript.json 的 connect`);
+        return [];
+    }
+}
+
 async function loadSite(dir, dev) {
     const entry = entryOf(dir);
     if (!entry) throw new Error(`${dir} 里没有入口文件(${ENTRY_FILES.join(" / ")})`);
     const meta = await readSiteMeta(entry);
     const dirId = basename(dir).replace(/\.dev$/, "");
     if (meta.id !== dirId) throw new Error(`站点目录 ${basename(dir)} 和站点 ID ${meta.id} 不一致`);
-    return { id: meta.id, name: meta.name, matches: meta.matches, excludeMatches: meta.excludeMatches || [], driver: meta.driver || null, dir, entry, plugins: collectPluginDir(join(dir, "plugins"), dev) };
+    const plugins = collectPluginDir(join(dir, "plugins"), dev);
+    for (const p of plugins) p.connect = await readPluginConnect(p.entry);
+    return { id: meta.id, name: meta.name, matches: meta.matches, excludeMatches: meta.excludeMatches || [], driver: meta.driver || null, dir, entry, plugins };
 }
 
 /** 脚本配置(发布信息)来自第一个站点目录的 userscript.json;没给名字空间时按脚本 ID 生成一个唯一值并写回配置,保证以后的构建不变 */
@@ -162,9 +185,11 @@ const hostOf = u => { try { return new URL(u).hostname; } catch { return null; }
  * @connect 只写用到的主机:更新地址的主机、在线主题允许的主机(themeHosts)、--hot 构建的本机服务、配置里追加的 connect。
  * 都没有时不写 @connect(脚本不能跨域请求任何主机)。配置写 "connect": ["*"] 时恢复成任意主机。
  */
-function connectHosts(cfg, dev) {
+function connectHosts(cfg, dev, sites = []) {
     if (Array.isArray(cfg.connect) && cfg.connect.includes("*")) return ["*"];
     const hosts = [
+        // 插件声明的 connect(readPluginConnect)
+        ...sites.flatMap(s => s.plugins.flatMap(p => p.connect || [])),
         cfg.updateBase && hostOf(cfg.updateBase),
         ...(cfg.themeHosts || []),
         dev && HOT_URL && hostOf(HOT_URL),
@@ -185,6 +210,8 @@ function header(cfg, sites, dev, grants = []) {
         ["version", cfg.version || VERSION],
         cfg.description && ["description", cfg.description],
         cfg.author && ["author", cfg.author],
+        // 脚本里打包了 GPL-3.0 的框架核心:缺省按 GPL-3.0-or-later 声明(Greasy Fork 等脚本站也要求写明许可证)
+        ["license", cfg.license || DEFAULT_LICENSE],
         cfg.icon && ["icon", cfg.icon],
         cfg.homepage && ["homepageURL", cfg.homepage],
         cfg.supportURL && ["supportURL", cfg.supportURL],
@@ -199,7 +226,7 @@ function header(cfg, sites, dev, grants = []) {
         ["sandbox", "JavaScript"],
         ["noframes", ""],
         ...[...new Set([...BASE_GRANTS, ...grants, ...(cfg.grants || [])])].map(g => ["grant", g]),
-        ...connectHosts(cfg, dev).map(c => ["connect", c]),
+        ...connectHosts(cfg, dev, sites).map(c => ["connect", c]),
         ...(cfg.require || []).map(r => ["require", r]),
         ...Object.entries(cfg.resource || {}).map(([k, v]) => ["resource", `${k} ${v}`]),
     ].filter(Boolean);
@@ -326,7 +353,7 @@ async function bundle(sites, cfg, dev) {
             __USPP_CHANGELOG__: JSON.stringify(readChangelog(sites[0])),
             __USPP_SITES__: JSON.stringify(sites.map(x => x.id)),
             __USPP_SCRIPT__: JSON.stringify(script),
-            __USPP_CONNECT__: JSON.stringify(connectHosts(cfg, dev)),
+            __USPP_CONNECT__: JSON.stringify(connectHosts(cfg, dev, sites)),
             // 只给冒烟测试:把完整接口挂到页面桥上,方便测试脚本从页面里拿;正常构建不要设
             __USPP_TEST_EXPOSE__: String(process.env.USPP_TEST_EXPOSE === "1"),
         },
@@ -379,13 +406,14 @@ async function buildAll() {
         const { code, map } = await bundle(sites, cfg, dev);
         const grants = detectGrants(code);
         if (grants.unknown.length && (!dev || variants.length === 1)) console.warn(`  提示:产物里有不认识的 ${grants.unknown.join(", ")},没写进 @grant(拼错了?需要的话在 userscript.json 的 grants 里加)`);
+        if (cfg.license && !gplCompatible(cfg.license) && (!dev || variants.length === 1)) console.warn(`  提示:license 写的是 ${cfg.license};脚本里打包了 GPL-3.0 的框架核心,公开发布时整条脚本要以 GPL-3.0(或更新版本)发布`);
         const head = header(cfg, sites, dev, grants.used);
         mkdirSync(outDir, { recursive: true });
         const prefix = head.text + "\n";
         writeFileSync(join(outDir, `${head.base}.user.js`), prefix + code + (map ? inlineSourcemap(map, prefix, cfg.id) : ""));
         writeFileSync(join(outDir, `${head.base}.meta.js`), head.text);
         console.log(`${head.base}.user.js  ${(code.length / 1024).toFixed(1)} KB  v${cfg.version || VERSION}  脚本 ID ${cfg.id}  站点:${sites.map(x => x.id).join(", ")}${cfg.channel ? `  渠道 ${cfg.channel}` : ""}`);
-        if (!dev || variants.length === 1) console.log(`  @connect ${connectHosts(cfg, dev).join(" ") || "(无)"}(插件用 U.fetchExternal、在线主题访问别的主机时,在 userscript.json 的 connect / themeHosts 里加上)`);
+        if (!dev || variants.length === 1) console.log(`  @connect ${connectHosts(cfg, dev, sites).join(" ") || "(无)"}(插件用 U.fetchExternal、在线主题访问别的主机时,在 userscript.json 的 connect / themeHosts 里加上)`);
     }
     return dirs;
 }

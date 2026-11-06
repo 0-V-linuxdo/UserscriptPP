@@ -1,7 +1,7 @@
 // 弹窗:openModal / closeModal / closeAllModals
 import { h, useEffect, useRef, useSubscription, Fragment, getRenderer } from "./react.js";
 import { ErrorBoundary } from "./react.js";
-import { addLayer, ensureRoot } from "./root.js";
+import { addLayer, ensureRoot, activeElement } from "./root.js";
 import { CloseIcon } from "./icons.js";
 import { Logger } from "../lib/logger.js";
 
@@ -52,11 +52,11 @@ function ModalFrame({ entry, isTop }) {
     const ref = useRef(null);
     // 打开时把焦点移进弹窗,关闭时还给打开前的元素
     useEffect(() => {
-        const prev = document.activeElement;
+        const prev = activeElement();
         const el = ref.current;
-        if (el && !el.contains(document.activeElement)) focusSafe(el.querySelector("[autofocus]") || el.querySelector('[role="dialog"]') || focusables(el)[0]);
+        if (el && !el.contains(activeElement())) focusSafe(el.querySelector("[autofocus]") || el.querySelector('[role="dialog"]') || focusables(el)[0]);
         return () => {
-            const now = document.activeElement;
+            const now = activeElement();
             if (prev && prev.isConnected && (!now || now === document.body || el?.contains(now) || !now.isConnected)) focusSafe(prev);
         };
     }, []);
@@ -69,7 +69,7 @@ function ModalFrame({ entry, isTop }) {
                 if (!el) return;
                 const list = focusables(el);
                 if (!list.length) { e.preventDefault(); return; }
-                const first = list[0], last = list[list.length - 1], cur = document.activeElement;
+                const first = list[0], last = list[list.length - 1], cur = activeElement();
                 if (!el.contains(cur)) { e.preventDefault(); focusSafe(e.shiftKey ? last : first); }
                 else if (e.shiftKey && (cur === first || !list.includes(cur))) { e.preventDefault(); focusSafe(last); }
                 else if (!e.shiftKey && cur === last) { e.preventDefault(); focusSafe(first); }

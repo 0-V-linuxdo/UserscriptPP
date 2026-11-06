@@ -1,6 +1,7 @@
 // 插件模型:定义、启用判定、启动/停止、开关、运行时注册
 /* global __USPP_DEV__ */
 import { isChromium } from "../env.js";
+import { fetchExternalFor } from "./net.js";
 import { Logger } from "./logger.js";
 import { diag, trace } from "./diag.js";
 import { Settings, PlainSettings, SettingsStore, setDefaultResolver } from "./settings.js";
@@ -260,6 +261,8 @@ export function startPlugin(p, stack = []) {
     p.startError = null;
     const t0 = perfNow();
     const ctx = openScope(p.name);
+    // 插件声明了 connect 时,ctx.fetchExternal 只能访问这些主机
+    ctx.fetchExternal = fetchExternalFor(p.name, p.connect);
     try {
         if (p.managedStyle) {
             enableStyle(p.managedStyle);

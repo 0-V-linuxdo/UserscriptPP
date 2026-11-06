@@ -1,3 +1,4 @@
+const uiOf = (d, tag) => { const h = d.querySelector(tag); const sr = h?.shadowRoot; return sr ? (sr.querySelector(`[class$="shadow-mount"]`) ?? sr) : h; };
 // 本地冒烟:jsdom + 仿 Turbopack 运行时 + 仿 Grok 模块
 const { JSDOM } = require("jsdom");
 const fs = require("fs");
@@ -257,7 +258,7 @@ const req = id => root.r(id);
         const cfg = host.querySelector('[aria-label="config"]');
         w.__RD.flushSync(() => cfg.click());
         await sleep(50);
-        out.modal = w.document.querySelector(`${px}root`)?.textContent.slice(0, 300);
+        out.modal = uiOf(w.document, `${px}root`)?.textContent.slice(0, 300);
     } catch (e) { if (e !== "skip" || !(order === "takeover" || P.patchReport().stats.yielded)) errors.push("plugin modal: " + (e.stack || e)); }
     // Quick CSS 与本地主题
     P.setQuickCss({ css: "body{outline:3px solid red}", enabled: true });
@@ -326,6 +327,7 @@ const req = id => root.r(id);
     w.__RD.flushSync(() => w.__RDC.createRoot(qHost).render(w.__React.createElement(Prov, { client: req(33).makeQueryClient() }, w.__React.createElement("span", null, "q"))));
     for (const k of Object.keys(qHost)) if (k.startsWith("__reactContainer$")) { w.document[k] = qHost[k]; delete qHost[k]; }
     out.bodyHasOwnRoot = !!w.document.querySelector(`body > ${px}root`);
+    out.uiInShadow = !!w.document.querySelector(`${px}root`)?.shadowRoot?.querySelector(`[class$="shadow-mount"]`);
     const subs = P.common.getSubscriptions();
     out.subs = { tier: subs.highestTier, name: subs.highestTierName, subscribed: subs.isSubscribed, x: subs.hasXSubscription, active: subs.active.length };
     if (order === "takeover" || P.patchReport().stats.yielded) {
@@ -334,7 +336,7 @@ const req = id => root.r(id);
         menus[0]?.fn();
         await sleep(1200);
         out.stillForeign = (() => { const d = Object.getOwnPropertyDescriptor(w, "TURBOPACK"); return !!d.get && String(d.get).includes("return cur") && w.TURBOPACK.push.name === "handleChunkPush"; })();
-        out.menuPanel = !!w.document.querySelector(`${px}root`)?.textContent.includes("Plugins");
+        out.menuPanel = !!uiOf(w.document, `${px}root`)?.textContent.includes("Plugins");
     }
     if (order === "first" && !process.env.LATE) {
         // 补丁检查器(开发构建):注册表里的模块 + 爬到的懒分块;查找器登记
@@ -399,7 +401,7 @@ const req = id => root.r(id);
         P.registerPlugin({ name: "MultiProbe", description: "multi", authors: [], settings: P.definePluginSettings({ notes: { type: P.OptionType.STRING, multiline: true, description: "Notes", default: "line1" } }) });
         P.openPluginSettings("MultiProbe");
         await sleep(300);
-        out.multiline = [...w.document.querySelectorAll(`${px}root textarea`)].some(t => t.value === "line1");
+        out.multiline = [...(uiOf(w.document, `${px}root`)?.querySelectorAll(`textarea`) ?? [])].some(t => t.value === "line1");
         P.closeAllModals();
         out.injectUndone = "InjectedIcon" in req(21);
         out.apiKeys = Object.keys(P);

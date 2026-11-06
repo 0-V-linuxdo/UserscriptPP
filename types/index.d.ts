@@ -131,6 +131,8 @@ export interface PluginData extends PluginDataStore { readonly global: PluginDat
 export interface PluginCtx {
     readonly plugin: string;
     readonly signal: AbortSignal;
+    /** 同 U.fetchExternal;插件声明了 connect 时只能访问这些主机(当前网站总是允许) */
+    fetchExternal(url: string, opts?: { timeout?: number }): Promise<Response>;
     readonly disposed: boolean;
     /** 目前还登记着的清理条数;提前撤销的、到点执行过的定时器不算 */
     readonly pending: number;
@@ -164,6 +166,8 @@ export interface PluginDef {
     authors: string[];
     icon?: Component<{ size?: number }>;
     tags?: string[];
+    /** 会访问的外部主机(同 @connect 的写法);构建时汇总进 @connect,ctx.fetchExternal 只能访问这些主机,插件卡片上会列出 */
+    connect?: string[];
     /** 毫秒时间戳;7 天内的出现在 Recent 分类 */
     updatedAt?: number;
     /** 所属站点 ID;"*" 表示任何站点(构建时按目录自动设置) */

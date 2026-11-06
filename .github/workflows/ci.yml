@@ -1,5 +1,6 @@
 # 持续集成:每次推送和合并请求跑冒烟测试、构建示例站点、静态检查补丁;
-# 每周一次(也可以手动触发)拉取线上页面逐条测试补丁,站点改版导致补丁失效时这一步会失败并在日志里标出是哪条。
+# 每周一次(也可以手动触发)拉取线上页面逐条测试补丁,站点改版导致补丁失效时这一步会失败并在日志里标出是哪条,
+# 同时开一个带 site-changed 标签的 Issue(已有未关闭的就追加评论)。
 name: CI
 
 on:
@@ -38,6 +39,9 @@ jobs:
     # 线上检查要访问站点,只在定时任务和手动触发时跑,不挡合并
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,4 +49,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node scripts/check-patches.mjs --site grok --url https://grok.com/
+      - name: 线上检查补丁
+        shell: bash
+        run: node scripts/check-patches.mjs --site grok --url https://grok.com/ 2>&1 | tee patch-report.txt; exit "${PIPESTATUS[0]}"
+      - name: 补丁失效时开 Issue
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "每周线上补丁检查失败,站点可能已改版。运行记录:${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo '```'
+            tail -n 150 patch-report.txt 2>/dev/null || echo "(没有检查输出,见运行记录)"
+            echo '```'
+          } > body.md
+          gh label create site-changed --color d93f0b --description "站点改版导致补丁失效" --force
+          num=$(gh issue list --label site-changed --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then gh issue comment "$num" --body-file body.md; else gh issue create --title "线上补丁检查失败:站点可能已改版" --label site-changed --body-file body.md; fi

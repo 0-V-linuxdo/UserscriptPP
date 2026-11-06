@@ -3,6 +3,7 @@ import { W, GM, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, SCRIPT_ID, SCRIPT_NAME, 
 import { plugins, isPluginEnabled, slowestStarts } from "./plugins.js";
 import { getSite } from "./sites.js";
 import { recentLogs } from "./logger.js";
+import { blockedRequests } from "./net.js";
 import { isSafeMode, safeModeReason } from "./safemode.js";
 
 let patchSummary = () => null;
@@ -27,6 +28,8 @@ export function collectDiagnostics() {
         `Enabled: ${enabled.map(p => p.name + (p.started ? "" : " (not started)")).join(", ") || "none"}`,
         `Failed to start: ${failed.map(p => `${p.name}: ${p.startError?.message ?? "unknown"}`).join("; ") || "none"}`,
     ];
+    const blocked = blockedRequests();
+    if (blocked.length) lines.push(`Blocked requests: ${[...new Set(blocked.map(b => b.plugin ? `${b.host} (${b.plugin})` : b.host))].join(", ")}`);
     const slow = slowestStarts(5);
     if (slow.length) lines.push(`Slowest starts: ${slow.map(s => `${s.name} ${s.ms} ms`).join(", ")}`);
     if (patches) lines.push(`Patches: ${JSON.stringify(patches)}`);

@@ -1,3 +1,4 @@
+const uiOf = (d, tag) => { const h = d.querySelector(tag); const sr = h?.shadowRoot; return sr ? (sr.querySelector(`[class$="shadow-mount"]`) ?? sr) : h; };
 // 插件 API 层和体验功能的冒烟:作用域自动清理、方法补丁器、网络改写、设置校验、插件数据、渲染型注入点、菜单补丁、
 // 拦截器、命令和快捷键、功能搜索栏、设置页登记、通知、失败汇总、诊断信息;MODE=safe / crash 时测安全模式
 // 用法:node features.cjs <脚本>;USPP_ID=<脚本 ID>
@@ -57,7 +58,7 @@ const px = `uspp-${ID}-`;
     const U = w[KEY].api;
     const out = { mode: MODE, safe: U.isSafeMode() };
     const doc = w.document;
-    const rootText = () => doc.querySelector(`${px}root`)?.textContent ?? "";
+    const rootText = () => uiOf(doc, `${px}root`)?.textContent ?? "";
 
     if (MODE === "pagehide") {
         // 就绪之前关页面仍然计入
@@ -74,7 +75,7 @@ const px = `uspp-${ID}-`;
         U.registerPlugin(U.definePlugin({ name: "Optional", description: "x", authors: ["t"], enabledByDefault: true, start() { out.optionalStarted = true; } }));
         await sleep(100);
         out.started = Object.values(U.plugins).map(p => `${p.name}:${p.started}`);
-        out.notice = doc.querySelector(`${px}root .${px}notice`)?.textContent ?? null;
+        out.notice = uiOf(doc, `${px}root`)?.querySelector(`.${px}notice`)?.textContent ?? null;
         out.quickCssApplied = !!doc.querySelector(`style[data-uspp-${ID}="quick-css"]`);
         out.boot = store.get("UserscriptPPBoot");
         finish();
@@ -238,7 +239,7 @@ const px = `uspp-${ID}-`;
         }));
         U.openPluginSettings("CheckProbe");
         await sleep(80);
-        const q = s => doc.querySelector(`${px}root [data-uspp-${ID}-setting="${s}"]`);
+        const q = s => uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-setting="${s}"]`);
         const langDisabled1 = q("lang")?.querySelector("fieldset")?.disabled;
         const input = q("count")?.querySelector("input");
         const type = (el, v) => { el.value = v; el.dispatchEvent(new w.Event("input", { bubbles: true })); el.dispatchEvent(new w.Event("change", { bubbles: true })); };
@@ -252,7 +253,7 @@ const px = `uspp-${ID}-`;
         U.Settings.plugins.CheckProbe.on = true;
         await sleep(50);
         const langDisabled2 = q("lang")?.querySelector("fieldset")?.disabled;
-        out.checks = { langDisabled1, langDisabled2, err, stored1, stored2, errGone: !q("count")?.textContent.includes("Must be"), about: !!doc.querySelector(`${px}root .about-probe`) };
+        out.checks = { langDisabled1, langDisabled2, err, stored1, stored2, errGone: !q("count")?.textContent.includes("Must be"), about: !!uiOf(doc, `${px}root`)?.querySelector(`.about-probe`) };
         U.closeAllModals();
     }
 
@@ -350,7 +351,7 @@ const px = `uspp-${ID}-`;
         U.Settings.plugins.Settings.keybinds = {};
         key("p", { altKey: true, shiftKey: true });
         await sleep(80);
-        const pal = doc.querySelector(`${px}root [data-uspp-${ID}-palette]`);
+        const pal = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-palette]`);
         const inp = pal?.querySelector("input");
         if (inp) { inp.value = "do thing"; inp.dispatchEvent(new w.Event("input", { bubbles: true })); }
         await sleep(50);
@@ -361,15 +362,15 @@ const px = `uspp-${ID}-`;
         // 搜索设置项
         U.openPalette();
         await sleep(50);
-        const inp2 = doc.querySelector(`${px}root [data-uspp-${ID}-palette] input`);
+        const inp2 = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-palette] input`);
         inp2.value = "debug logs"; inp2.dispatchEvent(new w.Event("input", { bubbles: true }));
         await sleep(50);
-        const firstSetting = doc.querySelector(`${px}root [data-uspp-${ID}-palette-item]`)?.getAttribute(`data-uspp-${ID}-palette-item`);
+        const firstSetting = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-palette-item]`)?.getAttribute(`data-uspp-${ID}-palette-item`);
         U.closeAllModals();
         // Keybinds 页列出命令
         U.openSettingsPanel({ tab: "keybinds" });
         await sleep(80);
-        const kbPage = doc.querySelector(`${px}root [data-uspp-${ID}-page="keybinds"]`)?.textContent ?? "";
+        const kbPage = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-page="keybinds"]`)?.textContent ?? "";
         U.closeAllModals();
         U.stopPlugin("CmdProbe");
         key("k", { altKey: true, shiftKey: true });
@@ -386,16 +387,16 @@ const px = `uspp-${ID}-`;
         U.startPlugin("PageProbe");
         U.openSettingsPanel({ tab: "rules" });
         await sleep(80);
-        const nav1 = [...doc.querySelectorAll(`${px}root [data-uspp-${ID}-panel-tab]`)].map(b => b.textContent);
-        const shown = !!doc.querySelector(`${px}root .rules-page`);
+        const nav1 = [...(uiOf(doc, `${px}root`)?.querySelectorAll(`[data-uspp-${ID}-panel-tab]`) ?? [])].map(b => b.textContent);
+        const shown = !!uiOf(doc, `${px}root`)?.querySelector(`.rules-page`);
         U.stopPlugin("PageProbe");
         await sleep(50);
-        const nav2 = [...doc.querySelectorAll(`${px}root [data-uspp-${ID}-panel-tab]`)].map(b => b.textContent);
+        const nav2 = [...(uiOf(doc, `${px}root`)?.querySelectorAll(`[data-uspp-${ID}-panel-tab]`) ?? [])].map(b => b.textContent);
         U.closeAllModals();
         let clicked = 0;
         U.notify({ title: "Saved", body: "All good", onClick: () => clicked++, system: true });
         await sleep(30);
-        const card = doc.querySelector(`${px}root .${px}notify`);
+        const card = uiOf(doc, `${px}root`)?.querySelector(`.${px}notify`);
         const cardText = card?.textContent;
         card?.click();
         await sleep(30);
@@ -403,7 +404,7 @@ const px = `uspp-${ID}-`;
         U.startPlugin("Breaker");
         U.openFailedPlugins();
         await sleep(50);
-        const failedText = doc.querySelector(`${px}root [data-uspp-${ID}-failed="Breaker"]`)?.textContent ?? "";
+        const failedText = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-failed="Breaker"]`)?.textContent ?? "";
         U.closeAllModals();
         const diag = U.collectDiagnostics();
         out.misc = {

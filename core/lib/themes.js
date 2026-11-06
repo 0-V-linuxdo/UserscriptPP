@@ -2,10 +2,10 @@
 import { Logger } from "./logger.js";
 import { Settings, PlainSettings } from "./settings.js";
 import { registerStyle, disableStyle, unregisterStyle, enableStyle } from "./styles.js";
-import { fetchExternal } from "./net.js";
+import { fetchExternal, allowedHosts, hostAllowed } from "./net.js";
 
 /** 构建时写进 @connect 的主机(见 scripts/build.mjs 的 connectHosts) */
-const CONNECT = typeof __USPP_CONNECT__ !== "undefined" ? __USPP_CONNECT__ : ["*"];
+const CONNECT = allowedHosts();
 import { GM } from "../env.js";
 import { siteKey, getSites } from "./sites.js";
 
@@ -119,7 +119,7 @@ async function fetchCss(url) {
     } catch (e) {
         // 主机不在脚本的 @connect 里时,脚本管理器会拒绝请求:直接说明原因
         const host = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
-        const allowed = CONNECT.includes("*") || CONNECT.some(h => host === h || host.endsWith("." + h));
+        const allowed = hostAllowed(host);
         if (host && !allowed) throw new Error(`Failed to fetch theme: ${host} is not in this script's allowed hosts (${CONNECT.join(", ")}). Host the CSS there, or ask the script's developer to add the host.`);
         throw new Error(`Failed to fetch theme (${e?.message || "network error"}).`);
     }

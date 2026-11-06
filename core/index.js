@@ -1,6 +1,6 @@
 // 站点脚本的入口:一份站点无关的核心 + 本脚本带的站点适配。同一页面上可以有多条基于框架的脚本,各自独立
 /* global __USPP_DEV__, __USPP_WEBPACK__ */
-import { W, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, HOT_URL, isChromium, SCRIPT_ID, SCRIPT_NAME, GLOBAL_NAME, INSTANCE_KEY, INSTANCE_EXPR, API_VERSION } from "./env.js";
+import { W, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, HOT_URL, isChromium, SCRIPT_ID, SCRIPT_NAME, SUPPORT_URL, GLOBAL_NAME, INSTANCE_KEY, INSTANCE_EXPR, API_VERSION } from "./env.js";
 import builtinSites from "uspp:sites";
 import builtinPlugins from "uspp:plugins";
 import { Logger } from "./lib/logger.js";
@@ -32,7 +32,7 @@ import { highlightCss } from "./ui/highlight.js";
 import { createExternalStore, createSelectionStore } from "./lib/stores.js";
 import * as icons from "./ui/icons.js";
 import { openModal, closeModal, closeAllModals, ModalCard, confirmDialog } from "./ui/modal.js";
-import { ensureRoot } from "./ui/root.js";
+import { ensureRoot, queryUi } from "./ui/root.js";
 import { showToast, dismissToast, showNotice, closeNotice, ToastType } from "./ui/toast.js";
 import { installFloating } from "./ui/floating.js";
 import { currentTheme } from "./ui/theme.js";
@@ -57,7 +57,7 @@ import { notify, getNotificationHistory } from "./ui/notify.js";
 import { beginBoot, isSafeMode, safeModeReason, lastBootInfo, markBootHealthy, reloadInSafeMode, exitSafeMode } from "./lib/safemode.js";
 import { collectDiagnostics, setPatchSummary } from "./lib/diagnostics.js";
 import { openPalette, closePalette, setPaletteOpener } from "./settings/Palette.js";
-import { copyDiagnostics } from "./settings/index.js";
+import { copyDiagnostics, reportIssue } from "./settings/index.js";
 import { showFailureSummary, openFailedList } from "./settings/FailedPlugins.js";
 import { startHotClient, evalPluginChunk } from "./lib/hot.js";
 import { installWebpack } from "./lib/webpack.js";
@@ -79,7 +79,7 @@ function openPluginSettings(plugin, focusKey) {
     openModal(({ onClose }) => R.h(PluginModal, { plugin: p, onClose }), { modalKey: `uspp-plugin-${p.name}` });
     // 从搜索栏打开某个设置项时滚到它并短暂高亮
     if (focusKey) setTimeout(() => {
-        const el = document.querySelector(`[data-uspp-setting="${String(focusKey).replace(/["\\]/g, "")}"]`);
+        const el = queryUi(`[data-uspp-setting="${String(focusKey).replace(/["\\]/g, "")}"]`);
         if (!el) return;
         try { el.scrollIntoView({ block: "center" }); } catch { /* 忽略 */ }
         el.classList.add("uspp-setting-flash");
@@ -105,7 +105,7 @@ function openSettings(opts = {}) {
         try { ok = !!host.open(opts); } catch (e) { logger.warn("站点设置界面打开失败", e); }
         if (ok) {
             setTimeout(() => {
-                const shown = typeof host.isOpen === "function" ? host.isOpen() : !!document.querySelector("[data-uspp-page]");
+                const shown = typeof host.isOpen === "function" ? host.isOpen() : !!queryUi("[data-uspp-page]");
                 if (!shown) openSettingsPanel(opts);
             }, 800);
             return "site";
@@ -205,9 +205,30 @@ function checkFingerprint(site) {
     if (prev && prev.length) {
         const set = new Set(prev);
         const overlap = now.filter(n => set.has(n)).length;
-        if (overlap / Math.max(now.length, prev.length) < 0.5) logger.warn(`${site.name} 的构建已变化(分块文件重合不到一半),部分补丁可能失效`);
+        if (overlap / Math.max(now.length, prev.length) < 0.5) {
+            logger.warn(`${site.name} 的构建已变化(分块文件重合不到一半),部分补丁可能失效`);
+            alertSiteChange(site, `build:${now.slice(0, 3).join(",")}`);
+        }
     }
     if (!prev || prev.join("\n") !== now.join("\n")) themes.writePartition().chunkFingerprint = now;
+}
+
+/**
+ * 站点改版提示:同一原因(同一版本脚本 + 同一种变化)只提示一次,带"Report a problem"入口(配了 supportURL 时)。
+ * 只在页面上提示,不上报任何东西。
+ */
+function alertSiteChange(site, reason) {
+    const key = `${VERSION}|${reason}`;
+    const part = themes.readPartition();
+    if (part.siteChangeNotice === key) return;
+    themes.writePartition().siteChangeNotice = key;
+    notify({
+        title: `${site.name} has changed`,
+        body: `${SCRIPT_NAME} may not work fully on this version of the site until it is updated.${SUPPORT_URL ? " Click to report it." : ""}`,
+        type: "warning",
+        duration: 15000,
+        onClick: SUPPORT_URL ? () => reportIssue() : undefined,
+    });
 }
 
 function retryFailed(list) {
@@ -626,7 +647,7 @@ function main() {
             logger.info(`站点已就绪,已加载 ${T.moduleCache.size} 个模块`);
             // 共存时部分模块不经本系统的包装执行,定期并入运行时缓存
             setInterval(() => { try { T.syncRuntimeCache(); } catch { /* 忽略 */ } }, 2000);
-            setTimeout(() => step("补丁健康报告", T.logHealthReport), 5000);
+            setTimeout(() => step("补丁健康报告", () => { if (T.logHealthReport()?.siteChanged) alertSiteChange(s, "patches"); }), 5000);
             if (__USPP_DEV__) setTimeout(() => step("查找器报告", () => {
                 const bad = failedFinders();
                 if (bad.length) logger.debug(`${bad.length} 个查找器解析为空(站点改版时最先失效):`, bad.map(f => f.finder));

@@ -3,9 +3,11 @@ import { Logger } from "../lib/logger.js";
 import { h, useSubscription, Fragment, getRenderer, wantUi } from "./react.js";
 import { ErrorBoundary } from "./react.js";
 import { installThemeWatcher } from "./theme.js";
+import { attachShadowStyles } from "../lib/styles.js";
+import { getSite } from "../lib/sites.js";
 
 const logger = new Logger("UI", "#fbcfe8");
-let root = null, host = null, retry = 0;
+let root = null, host = null, shadow = null, retry = 0;
 const layers = new Map(); // key -> Component
 const listeners = new Set();
 const emit = () => { for (const l of [...listeners]) l(); };
@@ -43,7 +45,17 @@ export function ensureRoot({ interactive = false } = {}) {
         host = document.createElement("uspp-root");
         for (const t of STOP) host.addEventListener(t, e => e.stopPropagation());
         document.body.appendChild(host);
-        root = R.createRoot(host);
+        // 界面放进 Shadow DOM:站点的 button {}、* {} 这类宽泛规则进不来;本系统的样式由 styles.js 同步进去。
+        // 站点写 uiShadow: false 时不用(例如要让站点样式作用到框架界面上)
+        let mount = host;
+        if (getSite()?.uiShadow !== false && typeof host.attachShadow === "function") {
+            shadow = host.attachShadow({ mode: "open" });
+            mount = document.createElement("div");
+            mount.className = "uspp-shadow-mount";
+            shadow.appendChild(mount);
+            attachShadowStyles(shadow);
+        }
+        root = R.createRoot(mount);
         root.render(h(Root, null));
         return true;
     } catch (e) {
@@ -51,6 +63,7 @@ export function ensureRoot({ interactive = false } = {}) {
         host?.remove();
         root = null;
         host = null;
+        shadow = null;
         return false;
     }
 }
@@ -60,6 +73,17 @@ export function unmountRoot() {
     host?.remove();
     root = null;
     host = null;
+    shadow = null;
 }
 
 export const getRootHost = () => host;
+/** 界面所在的根:Shadow DOM 里时是 shadow root,否则是 document */
+export const getUiRoot = () => shadow || document;
+/** 在框架界面里找元素:先找 Shadow DOM 里,再找页面上(嵌进站点设置界面的页面在页面 DOM 里) */
+export const queryUi = sel => (shadow && shadow.querySelector(sel)) || document.querySelector(sel);
+/** 当前获得焦点的元素,穿过本系统的 shadow root */
+export function activeElement() {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    return a;
+}
