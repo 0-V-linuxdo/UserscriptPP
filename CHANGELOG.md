@@ -4,6 +4,7 @@
 
 ## 0.1.0 - 2026-11-06
 
+- 以 GPL-3.0(或更新版本)发布,见 `LICENSE`。
 - 第一个带版本号的框架发布,可以按 tag 引用(见 README "框架版本与引用")。
 - `package.json` 提供命令 `uspp-build`、`uspp-create`、`uspp-check-patches`;构建所需的 esbuild、preact 改为运行依赖,框架作为依赖安装后即可构建。
 - `scripts/build.mjs` 不写 `--out` 时输出到当前目录的 `dist/`(之前是框架目录的 `dist/`)。

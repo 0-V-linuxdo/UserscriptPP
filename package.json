@@ -2,6 +2,7 @@
   "name": "userscript-pp",
   "version": "0.1.0",
   "description": "用户脚本开发框架:核心、构建工具、脚手架和补丁检查器",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "repository": {
@@ -22,7 +23,8 @@
     "scripts",
     "types",
     "CHANGELOG.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",

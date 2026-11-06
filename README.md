@@ -238,3 +238,7 @@ npm test                                 # jsdom 冒烟测试
 - `sites/example.dev/`、`sites/grok/`:模板和示例(各带 `userscript.json`)。
 - `plugins/<名字>/`:通用插件;目录名以 `.dev` 结尾只进开发构建,以 `.chromium` 结尾标记为仅 Chromium。
 - `test/`:冒烟测试、仿 Grok 环境、两条脚本同页测试。
+
+## 许可证
+
+Userscript++ 以 [GPL-3.0](LICENSE)(或更新版本)发布。构建出的站点脚本里打包了框架核心,属于框架的衍生作品;公开发布这样的脚本时,也要以 GPL-3.0 兼容的许可证提供源码(脚本本身不压缩,`.user.js` 即可读源码)。
