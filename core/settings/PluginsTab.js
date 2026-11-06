@@ -9,7 +9,7 @@ import { subscribe, dispatch, Events } from "../lib/events.js";
 import { openModal, confirmDialog } from "../ui/modal.js";
 import { isChromium, SCRIPT_NAME } from "../env.js";
 import {
-    PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, CircleAlertIcon, WarningIcon, ChromiumIcon, WrenchIcon, EyeIcon,
+    PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, LockIcon, WarningIcon, ChromiumIcon, WrenchIcon, EyeIcon,
 } from "../ui/icons.js";
 import { PluginModal } from "./PluginModal.js";
 import { hasPreview } from "./PluginPreview.js";
@@ -81,7 +81,7 @@ function Badges({ p }) {
     const failed = !p.required && isPluginEnabled(p.name) && !p.started;
     const icon = (key, tip, Icon, cls) => h(Tooltip, { key, content: tip }, h("span", { className: classes("uspp-icon-badge", cls) }, h(Icon, { size: 3.5 })));
     if (failed) out.push(icon("fail", "This plugin failed to start", WarningIcon, "uspp-warn"));
-    if (p.required) out.push(icon("req", `This plugin is required for ${SCRIPT_NAME} to work`, CircleAlertIcon));
+    if (p.required) out.push(icon("req", `This plugin is required for ${SCRIPT_NAME} to work`, LockIcon));
     if (p.dev) out.push(icon("dev", "Development build only", WrenchIcon));
     if (p.chromiumOnly) out.push(icon("chr", "Chromium only", ChromiumIcon));
     const seen = sys().knownPlugins?.[p.name];
@@ -122,10 +122,15 @@ function PluginCard({ p, tracker }) {
             btn("star", starred ? StarFillIcon : StarIcon, starred ? "Unstar" : "Star", toggleStar, starred),
             !p.required && btn("pin", pinned ? PinFillIcon : PinIcon, pinned ? "Unpin" : "Pin", togglePin, pinned),
             hasSettings && h(Tooltip, { key: "cfg", content: "config" }, btn(null, SlidersIcon, "config", openConfig)),
-            h(Switch, {
-                key: "switch", checked: enabled, disabled: p.required || isEnabledAsDependency(p.name), label: p.name,
-                onChange: () => { togglePlugin(p.name); tracker.onToggled(p); },
-            }),
+            p.required
+                // 必需插件:开关保持正常的“已开启”外观,只是锁住不能关;提示挂在外层 span 上(disabled 按钮不触发悬停)
+                ? h(Tooltip, { key: "switch", content: `Required for ${SCRIPT_NAME} to work, can't be turned off` },
+                    h("span", { className: "uspp-switch-lock", "data-uspp-locked": "true" },
+                        h(Switch, { checked: true, disabled: true, label: p.name })))
+                : h(Switch, {
+                    key: "switch", checked: enabled, disabled: isEnabledAsDependency(p.name), label: p.name,
+                    onChange: () => { togglePlugin(p.name); tracker.onToggled(p); },
+                }),
         ],
         footer: [
             h("span", { key: "a", className: "uspp-card-authors" }, (p.authors || []).join(", ") || "\u00A0"),

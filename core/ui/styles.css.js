@@ -64,7 +64,8 @@ uspp-root > * { pointer-events: auto; }
 .uspp-divider { display: flex; align-items: center; gap: 8px; color: var(--uspp-fg-tertiary); font-size: 12px; margin: 4px 0; }
 .uspp-divider::before, .uspp-divider::after { content: ""; flex: 1; height: 1px; background: var(--uspp-border-l1); }
 .uspp-card { display: flex; flex-direction: column; padding: 0; min-height: 120px; min-width: 0; overflow: hidden; contain: content; border: 1px solid var(--uspp-border-l1); border-radius: 8px; background: var(--uspp-surface-l1); }
-.uspp-card[data-required="true"] { opacity: .4; }
+.uspp-switch-lock { display: inline-flex; cursor: not-allowed; }
+.uspp-switch-lock button, .uspp-switch-lock [role="switch"] { opacity: 1 !important; pointer-events: none; }
 .uspp-card[data-failed="true"] { opacity: .5; border-color: color-mix(in srgb, var(--uspp-fg-danger) 45%, transparent); }
 .uspp-card-body { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
 .uspp-card-head { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
