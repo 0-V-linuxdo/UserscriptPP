@@ -43,8 +43,21 @@ const pad = n => String(n).padStart(2, "0");
 // 没写 version 时按构建时间生成:统一用 UTC、精确到秒,本机和 CI(时区不同)交替构建时版本号也不会倒退,同一分钟里的两次构建也能区分
 const VERSION = process.env.USPP_VERSION || `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}.${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
 
-// 框架核心必需的授权;站点可在 userscript.json 的 grants 里追加
-const BASE_GRANTS = ["unsafeWindow", "GM_getValue", "GM_setValue", "GM_deleteValue", "GM_addValueChangeListener", "GM_removeValueChangeListener", "GM_registerMenuCommand", "GM_unregisterMenuCommand", "GM_setClipboard", "GM_xmlhttpRequest"];
+// @grant 按产物自动推导:扫描打包结果里出现的 GM_xxx,脚本管理器认得的就写进去(核心、站点、插件用到什么写什么)。
+// unsafeWindow 总是需要;GM.xxx(异步接口)、window.close 等扫描不到的,在 userscript.json 的 grants 里手动加
+const BASE_GRANTS = ["unsafeWindow"];
+const KNOWN_GRANTS = new Set([
+    "GM_addElement", "GM_addStyle", "GM_addValueChangeListener", "GM_audio", "GM_cookie", "GM_deleteValue", "GM_deleteValues", "GM_download",
+    "GM_getResourceText", "GM_getResourceURL", "GM_getTab", "GM_getTabs", "GM_getValue", "GM_getValues", "GM_info", "GM_listValues", "GM_log",
+    "GM_notification", "GM_openInTab", "GM_registerMenuCommand", "GM_removeValueChangeListener", "GM_saveTab", "GM_setClipboard", "GM_setValue",
+    "GM_setValues", "GM_unregisterMenuCommand", "GM_webRequest", "GM_xmlhttpRequest",
+]);
+/** 产物里用到的授权;GM_ 后跟小写字母却不在已知列表里的名字单独返回,构建时提示(多半是拼错) */
+export function detectGrants(code) {
+    const used = new Set(), unknown = new Set();
+    for (const [name] of code.matchAll(/\bGM_[a-z]\w*/g)) (KNOWN_GRANTS.has(name) ? used : unknown).add(name);
+    return { used: [...used].sort(), unknown: [...unknown].sort() };
+}
 
 const ENTRY_FILES = ["index.js", "index.mjs", "index.jsx", "index.ts", "index.tsx"];
 const entryOf = dir => ENTRY_FILES.map(f => join(dir, f)).find(existsSync);
@@ -160,7 +173,7 @@ function connectHosts(cfg, dev) {
     return [...new Set(hosts)];
 }
 
-function header(cfg, sites, dev) {
+function header(cfg, sites, dev, grants = []) {
     const matches = cfg.match?.length ? cfg.match : [...new Set(sites.flatMap(x => x.matches))];
     const excludes = cfg.excludeMatch ?? [...new Set(sites.flatMap(x => x.excludeMatches))];
     const file = cfg.fileName || cfg.id;
@@ -185,7 +198,7 @@ function header(cfg, sites, dev) {
         ["inject-into", "auto"],
         ["sandbox", "JavaScript"],
         ["noframes", ""],
-        ...[...new Set([...BASE_GRANTS, ...(cfg.grants || [])])].map(g => ["grant", g]),
+        ...[...new Set([...BASE_GRANTS, ...grants, ...(cfg.grants || [])])].map(g => ["grant", g]),
         ...connectHosts(cfg, dev).map(c => ["connect", c]),
         ...(cfg.require || []).map(r => ["require", r]),
         ...Object.entries(cfg.resource || {}).map(([k, v]) => ["resource", `${k} ${v}`]),
@@ -286,7 +299,7 @@ async function bundle(sites, cfg, dev) {
     checkDuplicates(sites, generic);
     // 控制台调试用的全局名字:开发构建缺省 uspp_<ID>,发布构建缺省不挂
     const globalName = dev ? (cfg.global === undefined ? `uspp_${ident(cfg.id)}` : cfg.global) : (cfg.globalInProduction ? cfg.global || `uspp_${ident(cfg.id)}` : null);
-    const script = { id: cfg.id, name: cfg.name || sites.map(x => x.name).join(" + "), global: globalName };
+    const script = { id: cfg.id, name: cfg.name || sites.map(x => x.name).join(" + "), global: globalName, supportURL: cfg.supportURL || null };
     const res = await build({
         entryPoints: [join(root, "core/index.js")],
         bundle: true,
@@ -294,6 +307,9 @@ async function bundle(sites, cfg, dev) {
         target: ["chrome110", "firefox115"],
         charset: "utf8",
         write: false,
+        // 开发构建带 sourcemap:报错位置和断点对应回站点、插件的源文件(加元数据头后再平移、内联,见 inlineSourcemap)
+        sourcemap: dev ? "external" : false,
+        outfile: join(outDir, "uspp-bundle.js"),
         legalComments: "none",
         minify: false,
         ...JSX,
@@ -317,7 +333,20 @@ async function bundle(sites, cfg, dev) {
         plugins: [scopeNames(cfg.id, [join(root, "core"), join(root, "plugins"), ...sites.map(x => x.dir)]), virtualModules(sites, generic)],
         logLevel: "warning",
     });
-    return res.outputFiles[0].text;
+    const js = res.outputFiles.find(f => f.path.endsWith(".js"));
+    const map = res.outputFiles.find(f => f.path.endsWith(".map"));
+    return { code: js.text.replace(/\n\/\/# sourceMappingURL=\S+\s*$/, "\n"), map: map ? JSON.parse(map.text) : null };
+}
+
+/** 把 sourcemap 内联到脚本末尾:先按元数据头占的行数平移,源文件路径改成 uspp-src:///<脚本 ID>/<相对路径>,DevTools 里按目录列出 */
+function inlineSourcemap(map, prefixText, id) {
+    const shift = (prefixText.match(/\n/g) || []).length;
+    const sources = map.sources.map(s => {
+        const rel = relative(process.cwd(), resolve(outDir, s)).split(sep).join("/");
+        return `uspp-src:///${id}/${rel.replace(/^(\.\.\/)+/, "")}`;
+    });
+    const out = { ...map, sources, mappings: ";".repeat(shift) + map.mappings };
+    return `//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(out)).toString("base64")}\n`;
 }
 
 const exampleDirs = () => subdirs(join(root, "sites")).map(n => join(root, "sites", n)).filter(p => entryOf(p));
@@ -347,10 +376,13 @@ async function buildAll() {
         const sites = [];
         for (const dir of dirs) sites.push(await loadSite(dir, dev));
         const cfg = loadConfig(sites[0]);
-        const code = await bundle(sites, cfg, dev);
-        const head = header(cfg, sites, dev);
+        const { code, map } = await bundle(sites, cfg, dev);
+        const grants = detectGrants(code);
+        if (grants.unknown.length && (!dev || variants.length === 1)) console.warn(`  提示:产物里有不认识的 ${grants.unknown.join(", ")},没写进 @grant(拼错了?需要的话在 userscript.json 的 grants 里加)`);
+        const head = header(cfg, sites, dev, grants.used);
         mkdirSync(outDir, { recursive: true });
-        writeFileSync(join(outDir, `${head.base}.user.js`), head.text + "\n" + code);
+        const prefix = head.text + "\n";
+        writeFileSync(join(outDir, `${head.base}.user.js`), prefix + code + (map ? inlineSourcemap(map, prefix, cfg.id) : ""));
         writeFileSync(join(outDir, `${head.base}.meta.js`), head.text);
         console.log(`${head.base}.user.js  ${(code.length / 1024).toFixed(1)} KB  v${cfg.version || VERSION}  脚本 ID ${cfg.id}  站点:${sites.map(x => x.id).join(", ")}${cfg.channel ? `  渠道 ${cfg.channel}` : ""}`);
         if (!dev || variants.length === 1) console.log(`  @connect ${connectHosts(cfg, dev).join(" ") || "(无)"}(插件用 U.fetchExternal、在线主题访问别的主机时,在 userscript.json 的 connect / themeHosts 里加上)`);
@@ -476,6 +508,7 @@ async function bundlePluginChunk(entry, id) {
         legalComments: "none",
         ...JSX,
         inject: [hotShim],
+        sourcemap: "inline",
         resolveExtensions: [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json"],
         define: { __USPP_DEV__: "true" },
         plugins: [scopeNames(id, [join(root, "plugins"), ...dirsOfEntry(entry)])],

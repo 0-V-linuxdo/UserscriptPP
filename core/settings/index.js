@@ -1,5 +1,5 @@
 // 核心插件 Settings:框架设置面板、菜单命令入口、主题与 Quick CSS 的加载、系统数据承载
-import { SCRIPT_NAME } from "../env.js";
+import { SCRIPT_NAME, SUPPORT_URL, W } from "../env.js";
 import { definePlugin, definePluginSettings, OptionType, migratePluginSetting } from "../lib/plugins.js";
 import { SettingsStore } from "../lib/settings.js";
 import { applyAllThemes, applyQuickCss, isThemesEnabled, SITES_PATH } from "../lib/themes.js";
@@ -7,7 +7,7 @@ import { getSite } from "../lib/sites.js";
 import { addSlotItem, removeSlotItem } from "../lib/slots.js";
 import { setDebugLogs } from "../lib/logger.js";
 import { isSafeMode, reloadInSafeMode } from "../lib/safemode.js";
-import { collectDiagnostics } from "../lib/diagnostics.js";
+import { collectDiagnostics, reportIssueTarget } from "../lib/diagnostics.js";
 import { copyToClipboard } from "../lib/utils.js";
 import { showToast } from "../ui/toast.js";
 import { openPalette } from "./Palette.js";
@@ -18,6 +18,19 @@ import { openChangelog } from "./UpdatesTab.js";
 const NAME = "Settings";
 export const MENU_COMMAND_ID = "uspp-settings";
 const MENU_SEARCH_ID = "uspp-search", MENU_SAFE_ID = "uspp-safe-reload";
+
+/** 报告问题:打开 supportURL(GitHub 仓库时直接是填好诊断信息的新建 Issue 页);只打开页面,不上传任何东西 */
+export async function reportIssue() {
+    if (!SUPPORT_URL) return false;
+    const text = collectDiagnostics();
+    const target = reportIssueTarget(SUPPORT_URL, text);
+    if (target.copied) {
+        const ok = await copyToClipboard(text);
+        if (ok !== false) showToast(target.truncated ? "Full diagnostic info copied: paste it into the issue." : "Diagnostic info copied: paste it into your report.", "SUCCESS");
+    }
+    try { W.open(target.url, "_blank", "noopener"); } catch { return false; }
+    return true;
+}
 
 export async function copyDiagnostics() {
     const ok = await copyToClipboard(collectDiagnostics());
@@ -90,6 +103,7 @@ export default definePlugin({
         { id: "uspp.safeReload", name: "Reload in safe mode", description: "Reload with only required plugins, no themes and no Quick CSS.", keywords: ["crash", "broken"], run: () => reloadInSafeMode() },
         { id: "uspp.checkUpdates", name: "Check for updates", keywords: ["update", "version", "upgrade"], when: () => canUpdate(), run: () => checkNow() },
         { id: "uspp.changelog", name: "Show changelog", keywords: ["what's new", "release notes", "version"], run: () => openChangelog() },
+        { id: "uspp.reportIssue", name: "Report a problem", description: "Open the issue page with diagnostic info filled in. Nothing is sent until you submit it.", keywords: ["bug", "issue", "support", "feedback"], when: () => !!SUPPORT_URL, run: () => reportIssue() },
         { id: "uspp.diagnostics", name: "Copy diagnostic info", description: "Versions, enabled plugins, patch status and recent errors, for bug reports.", keywords: ["debug", "support", "report"], run: () => copyDiagnostics() },
     ],
 

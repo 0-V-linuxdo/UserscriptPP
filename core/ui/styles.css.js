@@ -91,6 +91,7 @@ uspp-root > * { pointer-events: auto; }
 .uspp-backup { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin-top: 18px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--uspp-border-l1); }
 .uspp-backup-text { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; }
 .uspp-sites { white-space: nowrap; display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.uspp-card-timing { flex-shrink: 0; font-size: 11px; color: var(--uspp-fg-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .uspp-site-badge { flex-shrink: 0; font-size: 11px; padding: 0 6px; border-radius: 6px; color: var(--uspp-fg-secondary); border: 1px solid var(--uspp-border-l1); white-space: nowrap; }
 .uspp-panel { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
 .uspp-panel-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }

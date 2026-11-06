@@ -200,7 +200,7 @@ export function describeResult(r) {
  * @param options.fetchText (路径) => Promise<文本>
  * @param options.evaluate  (分块文本) => [push 参数…](在隔离环境里执行分块,只收集 TURBOPACK.push 的参数)
  * @param options.limit     最多取多少个分块,缺省 3000
- * @param options.onProgress ({ done, queued }) => void
+ * @param options.onProgress ({ done, queued }) => 无返回值
  */
 export async function crawlChunks({ sources, seeds = [], loaded = [], fetchText, evaluate, limit = 3000, concurrency = 8, onProgress }) {
     const seen = new Set(loaded.map(p => String(p).replace(/^\/?_next\//, "")));

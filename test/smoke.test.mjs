@@ -394,6 +394,7 @@ test("冒烟:示例站点(开发构建)", () => {
     assert.equal(data.site, "example");
     assert.deepEqual(data.plugins, ["Settings", "ExampleHello", "ExampleTsx"]);
     assert.deepEqual(data.example, { button: "Say hello", toast: "helloHello from Userscript++", menu: true });
+    assert.equal(data.startTimed, true, "已启动的插件都应记下启动耗时");
     assert.equal(data.idle.count, 0, JSON.stringify(data.idle));
 });
 
@@ -712,7 +713,14 @@ test("核心里没有站点知识", () => {
 
 test("产物里的 void 只作为运算符出现", () => {
     for (const f of [...readdirSync(exOut).map(n => join(exOut, n)), ...readdirSync(grokOut).map(n => join(grokOut, n))]) {
-        const t = readFileSync(f, "utf8");
+        let t = readFileSync(f, "utf8");
+        // 开发构建末尾的内联 sourcemap 是 base64,字母可能碰巧拼出 void:解开后只查我们自己的源文件(不查 node_modules)
+        const sm = t.match(/\n\/\/# sourceMappingURL=data:application\/json;base64,(\S+)\n$/);
+        if (sm) {
+            t = t.slice(0, sm.index + 1);
+            const map = JSON.parse(Buffer.from(sm[1], "base64").toString());
+            t += map.sources.map((s, i) => (s.includes("/node_modules/") ? "" : map.sourcesContent[i])).join("\n");
+        }
         assert.deepEqual([...t.matchAll(/void(?! 0\b)/gi)].map(m => t.slice(m.index - 20, m.index + 20)), [], f);
     }
 });
@@ -780,7 +788,8 @@ test("@connect 只写用到的主机", () => {
 test("框架版本:package.json、CHANGELOG 和产物里的框架版本一致", () => {
     const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     assert.match(version, /^\d+\.\d+\.\d+(-[\w.]+)?$/);
-    const first = readFileSync(join(root, "CHANGELOG.md"), "utf8").match(/^## (\S+)/m)?.[1];
+    // "## 未发布" 一节放还没发版的改动,不算版本
+    const first = [...readFileSync(join(root, "CHANGELOG.md"), "utf8").matchAll(/^## (\S+)/gm)].map(m => m[1]).find(v => v !== "未发布");
     assert.equal(first, version, "CHANGELOG.md 最上面的版本应和 package.json 一致");
     const text = readFileSync(join(exOut, "example.user.js"), "utf8");
     assert.ok(text.includes(JSON.stringify(version)), "产物里应带框架版本");
@@ -794,4 +803,52 @@ test("发布构建不含开发专用代码;没有 webpack 站点时不打进 web
     }
     assert.ok(dev.includes("// core/lib/reporter.js\n"), "开发构建应包含补丁检查器");
     assert.ok(!prod.includes("function installWebpack("), "example 没有 webpack 站点,不应打进 webpack 驱动");
+});
+
+test("@grant 按产物自动推导,userscript.json 的 grants 追加在后面", () => {
+    const head = readFileSync(join(grokOut, "grok.meta.js"), "utf8");
+    const grants = [...head.matchAll(/@grant\s+(\S+)/g)].map(m => m[1]);
+    assert.equal(grants[0], "unsafeWindow");
+    for (const g of ["GM_getValue", "GM_setValue", "GM_xmlhttpRequest", "GM_registerMenuCommand", "GM_notification"]) assert.ok(grants.includes(g), `缺少 ${g}`);
+    assert.equal(new Set(grants).size, grants.length, "不应有重复的 @grant");
+    const out = tmp("uspp-grants-");
+    const dir = join(out, "sites", "granty");
+    cpSync(join(root, "sites", "example.dev"), dir, { recursive: true });
+    const cfgFile = join(dir, "userscript.json");
+    const cfg = JSON.parse(readFileSync(cfgFile, "utf8"));
+    writeFileSync(cfgFile, JSON.stringify({ ...cfg, id: "granty", grants: ["GM.getValue", "window.close"] }));
+    writeFileSync(join(dir, "index.js"), readFileSync(join(dir, "index.js"), "utf8").replace(/id:\s*"example"/, 'id: "granty"'));
+    writeFileSync(join(dir, "plugins", "ExampleHello", "extra.js"), "export const open = u => GM_openInTab(u);\n");
+    writeFileSync(join(dir, "plugins", "ExampleHello", "index.js"), 'import { open } from "./extra.js";\n' + readFileSync(join(dir, "plugins", "ExampleHello", "index.js"), "utf8").replace(/^/, "globalThis.__open = open;\n"));
+    execFileSync(process.execPath, [join(root, "scripts/build.mjs"), "--site-dir", dir, "--out", join(out, "dist"), "--prod"], { encoding: "utf8" });
+    const g2 = [...readFileSync(join(out, "dist", "granty.meta.js"), "utf8").matchAll(/@grant\s+(\S+)/g)].map(m => m[1]);
+    assert.ok(g2.includes("GM_openInTab"), "插件用到的 GM_openInTab 应自动写进 @grant");
+    assert.deepEqual(g2.slice(-2), ["GM.getValue", "window.close"]);
+});
+
+test("开发构建内联 sourcemap 并按元数据头平移;发布构建没有", () => {
+    const dev = readFileSync(join(grokOut, "grok.dev.user.js"), "utf8");
+    assert.doesNotMatch(readFileSync(join(grokOut, "grok.user.js"), "utf8"), /sourceMappingURL=/);
+    const m = dev.match(/\n\/\/# sourceMappingURL=data:application\/json;base64,(\S+)\n$/);
+    assert.ok(m, "开发构建末尾应有内联 sourcemap");
+    const map = JSON.parse(Buffer.from(m[1], "base64").toString());
+    assert.ok(map.sources.some(s => s === "uspp-src:///grok/sites/grok/plugins/GrokMenus/index.js"), "源文件路径应为 uspp-src:///<ID>/<相对路径>");
+    const headLines = dev.slice(0, dev.indexOf("// ==/UserScript==")).split("\n").length;
+    assert.ok(map.mappings.startsWith(";".repeat(headLines)), "映射应跳过元数据头");
+});
+
+test("报告问题:GitHub 仓库直接打开填好诊断信息的新建 Issue 页,太长时截短", async () => {
+    const { githubIssueUrl, reportIssueTarget } = await importCore("core/lib/diagnostics.js");
+    assert.equal(githubIssueUrl("https://example.com/help", "t", "b"), null);
+    const u = new URL(githubIssueUrl("https://github.com/me/my-news/issues", "Title", "Body"));
+    assert.equal(u.origin + u.pathname, "https://github.com/me/my-news/issues/new");
+    assert.equal(u.searchParams.get("body"), "Body");
+    const short = reportIssueTarget("https://github.com/me/repo", "line1\nline2");
+    assert.equal(short.copied, false);
+    assert.match(new URL(short.url).searchParams.get("body"), /line1\nline2/);
+    const long = reportIssueTarget("https://github.com/me/repo", Array.from({ length: 400 }, (_, i) => `log line ${i} ${"x".repeat(40)}`).join("\n"));
+    assert.equal(long.truncated, true);
+    assert.equal(long.copied, true);
+    assert.ok(long.url.length <= 7000);
+    assert.deepEqual(reportIssueTarget("https://example.com/help", "x"), { url: "https://example.com/help", copied: true, truncated: false });
 });

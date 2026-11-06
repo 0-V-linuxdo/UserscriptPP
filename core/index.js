@@ -579,7 +579,7 @@ function main() {
         if (__USPP_DEV__ && HOT_URL) step("热重载", () => startHotClient(HOT_URL, {
             onPlugin(ev) {
                 if (!P.plugins[ev.name]) { notify({ title: "Hot reload", body: `${ev.name} is new: reinstall the dev build to load it.`, type: "info" }); return; }
-                const def = evalPluginChunk(ev.code, api);
+                const def = evalPluginChunk(ev.code, api, ev.name);
                 if (ev.dev) def.dev = true;
                 if (ev.chromium) def.chromiumOnly = true;
                 def.site ??= ev.site;

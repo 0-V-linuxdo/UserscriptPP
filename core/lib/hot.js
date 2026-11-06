@@ -43,8 +43,10 @@ export function startHotClient(url, { onPlugin, onFull }) {
 }
 
 /** 把服务推来的代码执行成插件定义:代码返回定义对象,或 U => 定义 */
-export function evalPluginChunk(code, U) {
+export function evalPluginChunk(code, U, name = "plugin") {
+    // sourceURL:DevTools 里显示成 uspp-hot:///<插件名>.js,配合代码块里的内联 sourcemap 对应回源文件
+    const url = `\n//# sourceURL=uspp-hot:///${String(name).replace(/[^\w.-]/g, "_")}.js`;
     // eslint-disable-next-line no-new-func
-    const raw = new Function("U", code)(U);
+    const raw = new Function("U", code + url)(U);
     return typeof raw === "function" ? raw(U) : raw;
 }

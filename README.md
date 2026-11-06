@@ -51,13 +51,13 @@
    | 字段 | 说明 |
    | --- | --- |
    | `id` | 脚本 ID,缺省为站点 ID;页面上的名字、存储键和产物文件名都用它 |
-   | `name` / `description` / `author` / `icon` / `homepage` / `supportURL` | 写进元数据头 |
+   | `name` / `description` / `author` / `icon` / `homepage` / `supportURL` | 写进元数据头。配了 `supportURL` 时多一个命令 "Report a problem":GitHub 仓库地址直接打开填好诊断信息的新建 Issue 页,其他地址打开它并把诊断信息复制到剪贴板 |
    | `namespace` | 不写时按脚本 ID 生成一个唯一值(`userscript-pp:<ID>:<12 位十六进制>`)并写回本文件,以后的构建沿用 |
    | `version` | 不写时用构建时间(UTC)`YYYYMMDD.HHMMSS`;写语义化版本时预发布版本(`1.0.0-beta.2`)比正式版旧 |
    | `updateBase` | 更新地址前缀;写了才有 `@updateURL`(`<前缀><文件名>.meta.js`)和 `@downloadURL`(`<前缀><文件名>.user.js`),不写就没有更新行 |
    | `fileName` | 产物文件名,缺省为脚本 ID |
    | `match` / `excludeMatch` | 缺省取站点定义的 `matches` / `excludeMatches` |
-   | `grants` / `connect` / `require` / `resource` | 在框架必需的授权之外追加。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机 |
+   | `grants` / `connect` / `require` / `resource` | `@grant` 由构建按产物自动推导(扫描用到的 `GM_xxx`,含插件的);`grants` 只用来追加扫描不到的,例如 `GM.getValue` 这类异步接口和 `window.close`。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机 |
    | `themeHosts` | 在线主题允许从哪些主机取 CSS(写进 `@connect`);不在列表里的地址,Themes 页会说明原因。脚手架生成的配置里带了几个常见主机 |
    | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉。`window[Symbol.for("uspp:<ID>")]` 上只有页面桥(补丁里 `$self` 用的门面),不是完整接口 |
    | `globalInProduction` | 为 `true` 时发布构建也挂调试名。调试名上是完整接口,网站自己的脚本也能拿到,发布版不建议打开 |
@@ -179,6 +179,10 @@ Grok 示例里保留旧名(只在带它的构建里有):`common`、`addChatBarBu
 **脚手架。** `node scripts/create.mjs site <id> --dir <目录> [--driver none|webpack|turbopack] [--global <分块全局名>] [--match <网址模式>] [--ts]` 生成站点目录(`index.js`、`userscript.json`、示例插件 `plugins/Hello`;`--ts` 时插件写成 TSX 并带 `tsconfig.json`)。`node scripts/create.mjs plugin <Name> --site <站点目录> [--ts] [--patch]` 加一个插件。已有的文件不覆盖。
 
 **TS / JSX。** 入口可以是 `index.js` / `.mjs` / `.jsx` / `.ts` / `.tsx`,插件里引入的其他文件也一样。JSX 编译成 `U.react.h`,片段是 `U.react.Fragment`,不用自己引入。构建只去掉类型、不做类型检查;要检查就在站点目录里跑 `tsc --noEmit`(脚手架生成的 `tsconfig.json` 把 `userscript-pp` 指向 `types/index.d.ts`)。示例见 `sites/example.dev/plugins/ExampleTsx`。
+
+**sourcemap。** 开发构建末尾内联 sourcemap(已按元数据头的行数平移),控制台报错和断点直接对应回站点、插件的源文件,TS / TSX 显示原来的写法;DevTools 的 Sources 面板里在 `uspp-src:///<脚本 ID>/` 下按目录列出。开发构建因此大几倍,发布构建不带。
+
+**启动耗时。** 每个插件启动时记下耗时(`U.plugins.<名>.startMs`,毫秒,含 `start()`、注入点和命令登记,不含先启动的依赖);Plugins 页卡片上标出超过 10 ms 的,诊断信息列出最慢的 5 个。
 
 **单插件热重载。** `node scripts/build.mjs --site-dir <目录> --hot`(= `--watch --dev`,外加 `127.0.0.1:5174` 上的热重载服务,`--hot-port` 改端口)。装好这次的开发构建后:只改了一个插件目录里的文件时,页面上原地替换这个插件(先停、换定义、再启动,开关和设置不变,经 `ctx` 登记的都会撤掉),右下角提示 "Reloaded <插件>";改了核心、站点文件或多个插件时提示重新安装开发构建。页面经 `GM_xmlhttpRequest` 长轮询,不受网站 CSP 的 `connect-src` 限制;但执行推来的代码要用 `new Function`,页面 CSP 禁止时会退回提示重新安装。声明了打包器补丁的插件不能原地替换(补丁只在模块加载时生效),同样提示。只有 `--hot` 构建会连接,普通开发构建和发布构建里没有这段逻辑。
 

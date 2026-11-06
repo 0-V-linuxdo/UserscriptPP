@@ -63,6 +63,7 @@ if (!process.env.MERGE_CASE) (async () => {
     out.buildSites = P.buildSites;
     out.plugins = Object.keys(P.plugins);
     out.started = Object.values(P.plugins).map(p => `${p.name}:${p.started}`);
+    out.startTimed = Object.values(P.plugins).filter(p => p.started).every(p => typeof p.startMs === "number" && p.startMs >= 0);
     out.menus = liveMenus();
     // Quick CSS 写入后只对这个网站生效
     P.setQuickCss({ css: "p{outline:1px solid red}", enabled: true });

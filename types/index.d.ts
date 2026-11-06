@@ -203,7 +203,7 @@ export interface PluginDef {
     onSettingsChange?(): void;
     [extra: string]: any;
 }
-export interface Plugin extends PluginDef { started: boolean; startError?: any }
+export interface Plugin extends PluginDef { started: boolean; startError?: any; /** 本页启动耗时(毫秒),未启动时没有 */ startMs?: number }
 
 // ---------- 站点 ----------
 export interface SiteDef {

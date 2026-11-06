@@ -33,6 +33,8 @@ export const SCRIPT_ID = SCRIPT.id;
 export const SCRIPT_NAME = SCRIPT.name;
 /** 控制台调试用的全局名字(开发构建缺省开启,发布构建缺省关闭);null 表示不挂 */
 export const GLOBAL_NAME = SCRIPT.global || null;
+/** userscript.json 的 supportURL(提问题的地方);没配时为 null,"Report a problem" 命令不出现 */
+export const SUPPORT_URL = SCRIPT.supportURL || null;
 /** 实例挂在 window 的这个 Symbol 上(不占用普通全局名字);补丁代码通过 INSTANCE_EXPR 找到本实例 */
 export const INSTANCE_KEY = Symbol.for(`uspp:${SCRIPT_ID}`);
 export const INSTANCE_EXPR = `window[Symbol.for(${JSON.stringify(`uspp:${SCRIPT_ID}`)})]`;

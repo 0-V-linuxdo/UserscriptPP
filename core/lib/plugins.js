@@ -17,6 +17,7 @@ import { addInterceptor } from "./interceptors.js";
 import { registerSettingsPage } from "./settings-pages.js";
 import { isSafeMode, noteStarting, noteFailed } from "./safemode.js";
 
+const perfNow = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 const logger = new Logger("PluginManager", "#a5b4fc");
 
 export const StartAt = Object.freeze({
@@ -257,6 +258,7 @@ export function startPlugin(p, stack = []) {
 
     noteStarting(p.name);
     p.startError = null;
+    const t0 = perfNow();
     const ctx = openScope(p.name);
     try {
         if (p.managedStyle) {
@@ -298,7 +300,9 @@ export function startPlugin(p, stack = []) {
             track(p.name, () => SettingsStore.removePrefixChangeListener(prefix, fn));
         }
         p.started = true;
-        logger.debug(`已启动 ${p.name}`);
+        // 启动耗时(含 start()、注入点、命令登记;不含先启动的依赖),Plugins 页和诊断信息里列出慢的插件
+        p.startMs = Math.round((perfNow() - t0) * 10) / 10;
+        logger.debug(`已启动 ${p.name}(${p.startMs} ms)`);
         return true;
     } catch (e) {
         logger.error(`启动 ${p.name} 失败`, e);
@@ -310,6 +314,12 @@ export function startPlugin(p, stack = []) {
         p.started = false;
         return false;
     }
+}
+
+/** 已启动插件里启动最慢的几个:[{ name, ms }],从慢到快 */
+export function slowestStarts(limit = 5) {
+    return Object.values(plugins).filter(p => p.started && typeof p.startMs === "number")
+        .sort((a, b) => b.startMs - a.startMs).slice(0, limit).map(p => ({ name: p.name, ms: p.startMs }));
 }
 
 export function stopPlugin(p) {
