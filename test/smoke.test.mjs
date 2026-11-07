@@ -898,3 +898,14 @@ test("开发构建的 sourcemap 不带构建机目录,换目录构建结果不�
     assert.ok(ma.sources.includes("uspp-src:///srcmap/sites/example/plugins/ExampleHello/index.js"));
     assert.ok(ma.sources.includes("uspp-src:///srcmap/<define:__USPP_SCRIPT__>"));
 });
+
+test("没有菜单命令的管理器(AdGuard):设置入口改放在悬浮按钮区,系统通知走 GM.notification,诊断信息列出缺的能力", () => {
+    const { data, errors, logs } = runSite(bundle, "https://example.com/page", "example", { PROFILE: "adguard" });
+    assert.equal(errors, "none");
+    assert.equal(logs, "");
+    assert.equal(data.menus, 0);
+    assert.match(String(data.entry), /settings$/);
+    assert.equal(data.panel, true, "点悬浮入口应打开设置面板");
+    assert.deepEqual(data.gmNotes, ["Sys"]);
+    assert.equal(data.diag, "Script manager: AdGuard 7.20 · missing: menu, crossTabSync, clipboard");
+});

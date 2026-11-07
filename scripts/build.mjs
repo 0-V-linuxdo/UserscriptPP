@@ -57,10 +57,13 @@ const KNOWN_GRANTS = new Set([
     "GM_setValues", "GM_unregisterMenuCommand", "GM_webRequest", "GM_xmlhttpRequest",
 ]);
 /** 产物里用到的授权;GM_ 后跟小写字母却不在已知列表里的名字单独返回,构建时提示(多半是拼错) */
+const ASYNC_FALLBACK = { GM_notification: "GM.notification", GM_setClipboard: "GM.setClipboard" };
 export function detectGrants(code) {
     const used = new Set(), unknown = new Set();
     for (const [name] of code.matchAll(/\bGM_[a-z]\w*/g)) (KNOWN_GRANTS.has(name) ? used : unknown).add(name);
-    return { used: [...used].sort(), unknown: [...unknown].sort() };
+    // 核心在 GM_xxx 没有时退回 GM.xxx(AdGuard 只有 GM.notification),这些也要授权
+    const alsoAsync = [...used].map(n => ASYNC_FALLBACK[n]).filter(Boolean);
+    return { used: [...[...used].sort(), ...alsoAsync], unknown: [...unknown].sort() };
 }
 
 const ENTRY_FILES = ["index.js", "index.mjs", "index.jsx", "index.ts", "index.tsx"];
@@ -221,6 +224,8 @@ function header(cfg, sites, dev, grants = []) {
         upd && ["downloadURL", upd + encodeURIComponent(`${base}.user.js`)],
         ...matches.map(m => ["match", m]),
         ...excludes.map(m => ["exclude-match", m]),
+        // AdGuard 不认 @exclude-match,只认 @exclude(匹配模式本身也是合法的通配写法)
+        ...excludes.map(m => ["exclude", m]),
         ["run-at", "document-start"],
         // 页面上下文注入;严格 CSP 的网站上由脚本管理器退回沙盒
         ["inject-into", "auto"],

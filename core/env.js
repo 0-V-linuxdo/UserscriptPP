@@ -1,4 +1,6 @@
 // 运行环境:页面真实 window 与脚本管理器 API
+import { GM_OBJECT as G4 } from "./gm-object.js";
+
 /* global unsafeWindow, GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest, GM_addValueChangeListener, GM_removeValueChangeListener, GM_registerMenuCommand, GM_unregisterMenuCommand, GM_setClipboard, GM_notification, GM_info */
 
 export const W = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
@@ -12,10 +14,31 @@ export const GM = {
     removeListener: typeof GM_removeValueChangeListener === "function" ? GM_removeValueChangeListener : null,
     menu: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : null,
     unmenu: typeof GM_unregisterMenuCommand === "function" ? GM_unregisterMenuCommand : null,
-    clipboard: typeof GM_setClipboard === "function" ? GM_setClipboard : null,
-    notification: typeof GM_notification === "function" ? GM_notification : null,
-    info: typeof GM_info !== "undefined" ? GM_info : null,
+    clipboard: typeof GM_setClipboard === "function" ? GM_setClipboard : g4("setClipboard"),
+    // AdGuard 只有 GM.notification
+    notification: typeof GM_notification === "function" ? GM_notification : g4("notification"),
+    info: typeof GM_info !== "undefined" ? GM_info : (G4?.info ?? null),
 };
+
+/** GM_xxx 没有时退回 GM.xxx(参数一样,返回 Promise;调用处已兼容) */
+function g4(name) {
+    const f = G4 && G4[name];
+    return typeof f === "function" ? (...a) => f.apply(G4, a) : null;
+}
+
+/** 当前脚本管理器:tampermonkey / violentmonkey / scriptcat / adguard / 其他名字的小写 / unknown */
+export const MANAGER = (() => {
+    const n = String(GM.info?.scriptHandler || "").toLowerCase();
+    if (!n) return "unknown";
+    for (const k of ["tampermonkey", "violentmonkey", "scriptcat", "adguard"]) if (n.includes(k)) return k;
+    return n;
+})();
+
+/** 本系统用到、但当前管理器没提供的能力(诊断信息里列出;没有菜单时改用悬浮入口) */
+export const missingCapabilities = () => [
+    ["storage", GM.get && GM.set], ["menu", GM.menu], ["crossTabSync", GM.addListener], ["xhr", GM.xhr],
+    ["notification", GM.notification], ["clipboard", GM.clipboard], ["unsafeWindow", typeof unsafeWindow !== "undefined"],
+].filter(([, ok]) => !ok).map(([k]) => k);
 
 /** 构建这条脚本所用的 Userscript++ 框架版本(框架 package.json 的 version) */
 export const FRAMEWORK_VERSION = typeof __USPP_FRAMEWORK__ !== "undefined" ? __USPP_FRAMEWORK__ : "0.0.0";

@@ -132,7 +132,7 @@
 
 ## 设置
 
-- 脚本管理器菜单 "<脚本名> settings",或 `U.openSettings({ tab, plugin })`。站点声明了 `settingsHost` 时先用站点自己的设置界面,打不开时用框架面板。
+- 脚本管理器菜单 "<脚本名> settings"(管理器没有菜单命令时是页面角落的悬浮按钮),或 `U.openSettings({ tab, plugin })`。站点声明了 `settingsHost` 时先用站点自己的设置界面,打不开时用框架面板。
 - Plugins 页只列这条脚本里当前站点和通用的插件。
 - 主题和 Quick CSS 按站点分区(`plugins.Settings.sites.<站点ID>`;空白站点上按主机名分区),只对当前站点生效。
 - 设置存在这条脚本的 GM 存储里(键 `UserscriptPPSettings`,脚本管理器按脚本隔开);在有适配的站点上另存一份到这个网站的 IndexedDB 和 localStorage 作备份(键带脚本 ID)。读取时三处合并,以最丰富的一份为主。多个标签页互相同步,收到同步时派发 `settingsSync`。本次构建里没有的插件(暂时拿掉、改名、或用户回退了版本),设置和插件数据先保留并记下最后见到的时间,超过 90 天没再出现才删除。
@@ -246,6 +246,20 @@ npm test                                 # jsdom 冒烟测试
 - `sites/example.dev/`、`sites/grok/`:模板和示例(各带 `userscript.json`)。
 - `plugins/<名字>/`:通用插件;目录名以 `.dev` 结尾只进开发构建,以 `.chromium` 结尾标记为仅 Chromium。
 - `test/`:冒烟测试、仿 Grok 环境、两条脚本同页测试。
+
+## 支持的脚本管理器
+
+适配 Violentmonkey、Tampermonkey、ScriptCat 和 AdGuard(Windows / Mac / Android 版的用户脚本功能)。Greasemonkey 4 和 Safari 上的 Userscripts 只提供 `GM.xxx` 异步接口,不在适配范围内。
+
+| | Violentmonkey | Tampermonkey | ScriptCat | AdGuard |
+| --- | --- | --- | --- | --- |
+| 设置存储、跨域请求、剪贴板 | 有 | 有 | 有 | 有 |
+| 菜单命令 | 有 | 有 | 有 | 没有:设置入口自动改放在页面角落的悬浮按钮区 |
+| 多标签页同步 | 有 | 有 | 有 | 没有值变化监听:只在有适配的站点上经网站存储同步 |
+| 系统通知 | 有 | 有 | 有 | 只有 `GM.notification`,核心自动退回(构建会一并写 `@grant GM.notification`) |
+| `@exclude-match` | 认 | 认 | 认 | 不认:构建同时写一份 `@exclude` |
+
+核心按能力探测,不按管理器名字分支;缺的能力列在诊断信息的 "Script manager" 一行(例如 `missing: menu, crossTabSync`)。`@inject-into`、`@sandbox` 只有部分管理器认,其他的会忽略。
 
 ## 许可证
 

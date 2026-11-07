@@ -1,5 +1,6 @@
 // 核心插件 Settings:框架设置面板、菜单命令入口、主题与 Quick CSS 的加载、系统数据承载
-import { SCRIPT_NAME, SUPPORT_URL, W } from "../env.js";
+import { SCRIPT_NAME, SUPPORT_URL, W, GM } from "../env.js";
+import { SlidersIcon } from "../ui/icons.js";
 import { definePlugin, definePluginSettings, OptionType, migratePluginSetting } from "../lib/plugins.js";
 import { SettingsStore } from "../lib/settings.js";
 import { applyAllThemes, applyQuickCss, isThemesEnabled, SITES_PATH } from "../lib/themes.js";
@@ -86,6 +87,13 @@ function afterStart() {
     maybeAutoCheck(announceUpdate).catch(() => { });
 }
 
+// 管理器没有菜单命令(例如 AdGuard)时,设置入口改放在页面角落的悬浮按钮区
+const FLOATING_ENTRY_ID = "uspp.settingsEntry";
+function addFloatingEntry() {
+    if (GM.menu) return;
+    addSlotItem("floating", FLOATING_ENTRY_ID, { label: `${SCRIPT_NAME} settings`, icon: SlidersIcon, order: -1000, onSelect: () => openSettings() });
+}
+
 let openSettings = () => { };
 /** 由入口模块注入实际的打开函数(站点设置界面或框架面板) */
 export function setSettingsOpener(fn) { openSettings = fn; }
@@ -116,6 +124,7 @@ export default definePlugin({
         if (isSafeMode()) {
             addSlotItem("menuCommand", MENU_COMMAND_ID, { label: `${SCRIPT_NAME} settings`, order: -1000, onSelect: () => openSettings() });
             addSlotItem("menuCommand", MENU_SEARCH_ID, { label: `${SCRIPT_NAME}: search…`, order: -999, onSelect: () => openPalette() });
+            addFloatingEntry();
             return;
         }
         applyQuickCss();
@@ -131,9 +140,11 @@ export default definePlugin({
         addSlotItem("menuCommand", MENU_COMMAND_ID, { label: `${SCRIPT_NAME} settings`, order: -1000, onSelect: () => openSettings() });
         addSlotItem("menuCommand", MENU_SEARCH_ID, { label: `${SCRIPT_NAME}: search…`, order: -999, onSelect: () => openPalette() });
         addSlotItem("menuCommand", MENU_SAFE_ID, { label: `${SCRIPT_NAME}: reload in safe mode`, order: -998, onSelect: () => reloadInSafeMode() });
+        addFloatingEntry();
     },
     stop() {
         if (this._apply) for (const k of [SITES_PATH, "plugins.Settings.themesEnabled", "plugins.Settings.onlineThemesEnabled"]) SettingsStore.removePrefixChangeListener(k, this._apply);
         for (const id of [MENU_COMMAND_ID, MENU_SEARCH_ID, MENU_SAFE_ID]) removeSlotItem("menuCommand", id);
+        removeSlotItem("floating", FLOATING_ENTRY_ID);
     },
 });

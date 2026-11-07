@@ -1,5 +1,5 @@
 // 诊断信息:汇总成一段文字,方便用户提问题时附上。不含设置值
-import { W, GM, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, SCRIPT_ID, SCRIPT_NAME, API_VERSION } from "../env.js";
+import { W, GM, missingCapabilities, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, SCRIPT_ID, SCRIPT_NAME, API_VERSION } from "../env.js";
 import { plugins, isPluginEnabled, slowestStarts } from "./plugins.js";
 import { getSite } from "./sites.js";
 import { recentLogs } from "./logger.js";
@@ -20,7 +20,7 @@ export function collectDiagnostics() {
     try { patches = patchSummary(); } catch { patches = null; }
     const lines = [
         `${SCRIPT_NAME} ${VERSION} (${BUILD_TYPE}) · script ID ${SCRIPT_ID} · Userscript++ ${FRAMEWORK_VERSION} · API ${API_VERSION}`,
-        `Script manager: ${info?.scriptHandler ?? "unknown"} ${info?.version ?? ""}`.trim(),
+        `Script manager: ${`${info?.scriptHandler ?? "unknown"} ${info?.version ?? ""}`.trim()}${missingCapabilities().length ? ` · missing: ${missingCapabilities().join(", ")}` : ""}`,
         `Browser: ${ua}`,
         `Site: ${getSite().id} · ${(() => { try { return W.location.origin + W.location.pathname; } catch { return "?"; } })()}`,
         `Safe mode: ${isSafeMode() ? `on (${safeModeReason()})` : "off"}`,

@@ -22,6 +22,14 @@ w.GM_deleteValue = k => store.delete(k);
 w.GM_addValueChangeListener = () => 1;
 w.GM_registerMenuCommand = (name, fn) => { menus.push({ name, fn }); return menus.length; };
 w.GM_unregisterMenuCommand = id => { if (menus[id - 1]) menus[id - 1].removed = true; };
+// 只有 AdGuard 提供的接口:没有菜单命令、没有值变化监听,系统通知只有 GM.notification
+const gmNotes = [];
+if (process.env.PROFILE === "adguard") {
+    delete w.GM_registerMenuCommand; delete w.GM_unregisterMenuCommand; delete w.GM_addValueChangeListener;
+    w.GM_info = { scriptHandler: "AdGuard", version: "7.20" };
+    w.unsafeWindow = w; w.GM_xmlhttpRequest = () => ({ abort() { } });
+    w.GM = { info: w.GM_info, notification: d => { gmNotes.push(d.title); return Promise.resolve(); } };
+}
 // 本脚本的 GM 数据里有已不在这条脚本里的插件的数据:启动后清理
 // 本次构建里没有的插件:GrokChatBar 没有记录(这次开始计时、保留),SomeGrokPlugin 91 天前最后见到(删除)
 store.set("UserscriptPPSettings", { plugins: { GrokChatBar: { enabled: true }, SomeGrokPlugin: { enabled: true, x: 1 }, Settings: { pluginsLastSeen: { SomeGrokPlugin: Date.now() - 91 * 864e5 } } } });
@@ -56,6 +64,23 @@ if (!process.env.MERGE_CASE) (async () => {
     }
     const P = w[KEY].api;
     const out = {};
+    if (process.env.PROFILE) {
+        const btn = () => uiOf(w.document, `${px}root`)?.querySelector(`[data-uspp-${ID}-floating-item="uspp.settingsEntry"], [data-uspp-floating-item="uspp.settingsEntry"]`);
+        out.entry = btn()?.getAttribute("aria-label") ?? null;
+        btn()?.click();
+        await sleep(80);
+        out.panel = !!uiOf(w.document, `${px}root`)?.textContent.includes("Plugins");
+        P.closeAllModals();
+        P.notify({ title: "Sys", body: "b", system: true });
+        await sleep(20);
+        out.gmNotes = gmNotes;
+        out.diag = P.collectDiagnostics?.().split("\n").find(l => l.startsWith("Script manager")) ?? null;
+        out.menus = menus.length;
+        console.log(JSON.stringify(out, null, 1));
+        console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
+        console.log("LOGS:", logs.filter(l => /^\[(warn|error)\]/.test(l)).join("\n"));
+        process.exit(0);
+    }
     const d = Object.getOwnPropertyDescriptor(w, "TURBOPACK");
     out.turbopackTouched = !!d;
     out.fetchWrapped = w.fetch !== undefined && /uspp/i.test(String(w.fetch));
