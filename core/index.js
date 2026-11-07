@@ -12,6 +12,7 @@ import * as Sites from "./lib/sites.js";
 import { matchesUrl, matchPattern } from "./lib/match.js";
 import { exportSettings, importSettings, parseBackup } from "./lib/backup.js";
 import * as P from "./lib/plugins.js";
+import { onPluginTripped, pluginErrorStats } from "./lib/plugin-errors.js";
 import * as T from "./lib/turbopack.js";
 import * as F from "./lib/finders.js";
 import * as themes from "./lib/themes.js";
@@ -230,6 +231,15 @@ function alertSiteChange(site, reason) {
         onClick: SUPPORT_URL ? () => reportIssue() : undefined,
     });
 }
+
+// 插件运行期出错太多被停掉时提示一次;点开插件设置可以看最近的错误
+onPluginTripped((name, s) => notify({
+    title: `${name} was turned off`,
+    body: `It kept failing on this page (${s.recent.length} errors in a short time). It will start again when you reload. Last error: ${s.last?.message ?? "unknown"}`,
+    type: "error",
+    duration: 15000,
+    plugin: name,
+}));
 
 function retryFailed(list) {
     let pending = list.slice();
@@ -459,7 +469,7 @@ function main() {
         // 命令、搜索栏、快捷键
         registerCommand: def => ownByCurrent(registerCommand(def)), runCommand, getCommands, keyFor, openPalette, closePalette,
         // 安全模式、诊断
-        isSafeMode, reloadInSafeMode, exitSafeMode, collectDiagnostics, copyDiagnostics, openFailedPlugins: openFailedList,
+        isSafeMode, reloadInSafeMode, exitSafeMode, collectDiagnostics, copyDiagnostics, pluginErrorStats, openFailedPlugins: openFailedList,
         // 更新
         checkForUpdate, installUpdate, openChangelog, changelog: CHANGELOG,
         // 界面

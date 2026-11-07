@@ -80,7 +80,7 @@ export async function importSettings(settings, { data: pluginData } = {}) {
         try { if (now) startPlugin(p); else stopPlugin(p); } catch (e) { logger.error(`导入后启停 ${name} 失败`, e); }
         dispatch(Events.PLUGIN_TOGGLE, { name, enabled: now });
     }
-    await saveNow();
+    await saveNow({ flushBackup: true });
     if (pluginData) { try { await importData(pluginData); } catch (e) { logger.error("导入插件数据失败", e); } }
     if (reload) dispatch(Events.RELOAD_NEEDED, { reason: "import" });
     return reload;

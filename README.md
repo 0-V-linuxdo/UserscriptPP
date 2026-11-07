@@ -135,7 +135,7 @@
 - 脚本管理器菜单 "<脚本名> settings"(管理器没有菜单命令时是页面角落的悬浮按钮),或 `U.openSettings({ tab, plugin })`。站点声明了 `settingsHost` 时先用站点自己的设置界面,打不开时用框架面板。
 - Plugins 页只列这条脚本里当前站点和通用的插件。
 - 主题和 Quick CSS 按站点分区(`plugins.Settings.sites.<站点ID>`;空白站点上按主机名分区),只对当前站点生效。
-- 设置存在这条脚本的 GM 存储里(键 `UserscriptPPSettings`,脚本管理器按脚本隔开);在有适配的站点上另存一份到这个网站的 IndexedDB 和 localStorage 作备份(键带脚本 ID)。读取时三处合并,以最丰富的一份为主。多个标签页互相同步,收到同步时派发 `settingsSync`。本次构建里没有的插件(暂时拿掉、改名、或用户回退了版本),设置和插件数据先保留并记下最后见到的时间,超过 90 天没再出现才删除。
+- 设置存在这条脚本的 GM 存储里(键 `UserscriptPPSettings`,脚本管理器按脚本隔开);在有适配的站点上另存一份到这个网站的 IndexedDB 作备份(键带脚本 ID;合并到 2 秒写一次,离开页面时补写;脚本管理器没有值变化监听时也写 localStorage,靠它的 storage 事件做多标签页同步)。内容和上次写入的一样时不重写。读取时三处合并,以最丰富的一份为主。多个标签页互相同步,收到同步时派发 `settingsSync`。本次构建里没有的插件(暂时拿掉、改名、或用户回退了版本),设置和插件数据先保留并记下最后见到的时间,超过 90 天没再出现才删除。
 - Backup 页导出 / 导入整份设置;标 `sensitive: true` 的设置项默认不导出。
 
 ## 公开接口
@@ -160,7 +160,7 @@ Grok 示例里保留旧名(只在带它的构建里有):`common`、`addChatBarBu
 
 ## 插件作用域与扩展接口
 
-**`start(ctx)` / `stop(ctx)`。** 插件启动时拿到自己的作用域 `ctx`。经 `ctx` 登记的东西,插件停用时按登记的倒序自动撤掉:`ctx.observe`、`onRouteChange`、`onRequest` / `onResponse`、`rewriteRequest` / `rewriteResponse`、`onWebSocket` / `onEventSource`、`addRenderHook`、`subscribe`、`onSlotChange`、`addSlotItem`、`patch`(方法补丁)、`listen`(事件监听)、`setTimeout` / `setInterval`、`register(撤销函数)`;`ctx.signal` 在停用时中止,`ctx.data` 是插件数据存储。`start` 同步执行期间直接调用的 `U.observe` 等也归到这个插件名下(`await` 之后不算,一律用 `ctx` 更稳)。插件定义里的 `commands`、`interceptors`、`settingsPages` 也随插件启停。
+**`start(ctx)` / `stop(ctx)`。** 插件启动时拿到自己的作用域 `ctx`。经 `ctx` 登记的东西,插件停用时按登记的倒序自动撤掉:`ctx.observe`、`onRouteChange`、`onRequest` / `onResponse`、`rewriteRequest` / `rewriteResponse`、`onWebSocket` / `onEventSource`、`addRenderHook`、`subscribe`、`onSlotChange`、`addSlotItem`、`patch`(方法补丁)、`listen`(事件监听)、`setTimeout` / `setInterval`、`register(撤销函数)`;`ctx.signal` 在停用时中止,`ctx.data` 是插件数据存储。**运行期错误归到插件**:经 `ctx` 登记的回调(监听、定时器、observe、路由、事件、注入点项的点击、网络和方法补丁的处理函数,含 async 的)、`events` / `zustand` / `commands` / `interceptors` / `onSettingsChange` 和 async `start()` 在 await 之后出的错,都记到这个插件名下,插件卡片上显示错误数(悬停看最近一条),诊断信息里有 "Runtime errors" 一行,`U.pluginErrorStats()` 可取;插件自己捕获的错误用 `ctx.reportError(err, 位置)` 记。30 秒内出错 10 次的插件本页先停掉并提示用户(不改开关,刷新后照常启动;必需插件不停)。`start` 同步执行期间直接调用的 `U.observe` 等也归到这个插件名下(`await` 之后不算,一律用 `ctx` 更稳)。插件定义里的 `commands`、`interceptors`、`settingsPages` 也随插件启停。
 
 | 接口 | 作用 |
 | --- | --- |

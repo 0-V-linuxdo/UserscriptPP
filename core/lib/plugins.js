@@ -13,6 +13,7 @@ import { findStore, waitFor, filters } from "./finders.js";
 import { getReact } from "../ui/react.js";
 import { getSite } from "./sites.js";
 import { openScope, closeScope, getScope, runAs } from "./scope.js";
+import { guard, reportPluginError, setBreaker, resetBreaker } from "./plugin-errors.js";
 import { registerCommand } from "./commands.js";
 import { addInterceptor } from "./interceptors.js";
 import { registerSettingsPage } from "./settings-pages.js";
@@ -203,7 +204,7 @@ function subscribeZustand(p) {
         const attach = store => {
             if (cancelled) return;
             const handler = (cur, prev) => {
-                try { conf.handler.call(p, cur, prev); } catch (e) { logger.error(`${p.name} 的 ${storeName} 处理函数出错`, e); }
+                try { conf.handler.call(p, cur, prev); } catch (e) { reportPluginError(p.name, `zustand:${storeName}`, e); }
             };
             if (conf.selector) {
                 if (store.subscribe.length >= 2) {
@@ -259,6 +260,7 @@ export function startPlugin(p, stack = []) {
 
     noteStarting(p.name);
     p.startError = null;
+    resetBreaker(p.name); // 重新启动后熔断重新计
     const t0 = perfNow();
     const ctx = openScope(p.name);
     // 插件声明了 connect 时,ctx.fetchExternal 只能访问这些主机
@@ -268,13 +270,15 @@ export function startPlugin(p, stack = []) {
             enableStyle(p.managedStyle);
             if (!pluginHasPatches(p)) track(p.name, () => disableStyle(p.managedStyle));
         }
-        runAs(p.name, () => p.start?.(ctx));
+        const started = runAs(p.name, () => p.start?.(ctx));
+        // async start():await 之后的出错不算启动失败(插件已在运行),记为运行期错误
+        if (started && typeof started.then === "function") started.then(undefined, e => reportPluginError(p.name, "start (async)", e));
         for (const c of p.commands || []) {
             if (!c) continue;
-            track(p.name, registerCommand({ ...c, id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
+            track(p.name, registerCommand({ ...c, run: guard(p.name, `command:${c.id ?? c.name}`, c.run, true), id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
         }
         for (const [name, fn] of Object.entries(p.interceptors || {})) {
-            if (typeof fn === "function") track(p.name, addInterceptor(name, fn.bind(p), { id: p.name }));
+            if (typeof fn === "function") track(p.name, addInterceptor(name, guard(p.name, `interceptor:${name}`, fn.bind(p), true), { id: p.name }));
         }
         for (const page of p.settingsPages || []) {
             if (page) track(p.name, registerSettingsPage({ ...page, plugin: p.name }));
@@ -289,7 +293,7 @@ export function startPlugin(p, stack = []) {
             });
         }
         for (const [ev, handler] of Object.entries(p.events || {})) {
-            const off = subscribeEvent(ev, data => handler.call(p, data));
+            const off = subscribeEvent(ev, guard(p.name, `event:${ev}`, data => handler.call(p, data)));
             track(p.name, off);
         }
         if (p.zustand) subscribeZustand(p);
@@ -297,12 +301,13 @@ export function startPlugin(p, stack = []) {
             const prefix = `plugins.${p.name}.`;
             const fn = (v, path) => {
                 if (path === `${prefix}enabled`) return;
-                try { p.onSettingsChange(v, path); } catch (e) { logger.error(`${p.name}.onSettingsChange 出错`, e); }
+                try { p.onSettingsChange(v, path); } catch (e) { reportPluginError(p.name, "onSettingsChange", e); }
             };
             SettingsStore.addPrefixChangeListener(prefix, fn);
             track(p.name, () => SettingsStore.removePrefixChangeListener(prefix, fn));
         }
         p.started = true;
+        p.trippedByErrors = false;
         // 启动耗时(含 start()、注入点、命令登记;不含先启动的依赖),Plugins 页和诊断信息里列出慢的插件
         p.startMs = Math.round((perfNow() - t0) * 10) / 10;
         logger.debug(`已启动 ${p.name}(${p.startMs} ms)`);
@@ -318,6 +323,15 @@ export function startPlugin(p, stack = []) {
         return false;
     }
 }
+
+// 熔断:运行期出错太多的插件本页先停掉(不改用户的开关,刷新后照常启动);必需插件不停
+setBreaker(name => {
+    const p = plugins[name];
+    if (!p || p.required || !p.started) return false;
+    stopPlugin(p);
+    p.trippedByErrors = true;
+    return true;
+});
 
 /** 已启动插件里启动最慢的几个:[{ name, ms }],从慢到快 */
 export function slowestStarts(limit = 5) {

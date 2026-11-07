@@ -17,7 +17,8 @@ for (const k of ["log", "info", "warn", "error", "debug"]) w.console[k] = (...a)
 const store = new Map();
 const menus = [];
 w.GM_getValue = (k, d) => store.has(k) ? store.get(k) : d;
-w.GM_setValue = (k, v) => store.set(k, v);
+let settingsWrites = 0;
+w.GM_setValue = (k, v) => { if (k === "UserscriptPPSettings") settingsWrites++; store.set(k, v); };
 w.GM_deleteValue = k => store.delete(k);
 w.GM_addValueChangeListener = () => 1;
 w.GM_registerMenuCommand = (name, fn) => { menus.push({ name, fn }); return menus.length; };
@@ -64,6 +65,21 @@ if (!process.env.MERGE_CASE) (async () => {
     }
     const P = w[KEY].api;
     const out = {};
+    if (process.env.SAVE_PROBE) {
+        const S = P.Settings.plugins.Settings;
+        const w0 = settingsWrites;
+        S.starredPlugins = ["a"]; await sleep(250);
+        const w1 = settingsWrites;
+        // 改了又改回来(在合并保存的 100 ms 内):内容和上次写入的一样,不重写
+        S.starredPlugins = ["x"]; S.starredPlugins = ["a"]; await sleep(250);
+        const w2 = settingsWrites;
+        S.starredPlugins = ["a", "b"]; await sleep(250);
+        out.saveProbe = { firstWrites: w1 - w0, sameWrites: w2 - w1, changedWrites: settingsWrites - w2 };
+        console.log(JSON.stringify(out, null, 1));
+        console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
+        console.log("LOGS:");
+        process.exit(0);
+    }
     if (process.env.PROFILE) {
         const btn = () => uiOf(w.document, `${px}root`)?.querySelector(`[data-uspp-${ID}-floating-item="uspp.settingsEntry"], [data-uspp-floating-item="uspp.settingsEntry"]`);
         out.entry = btn()?.getAttribute("aria-label") ?? null;

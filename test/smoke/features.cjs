@@ -415,6 +415,40 @@ const px = `uspp-${ID}-`;
         };
         logs.splice(0);
     }
+
+    // ---------- 运行期错误归到插件、熔断 ----------
+    {
+        U.registerPlugin(U.definePlugin({
+            name: "Flaky", description: "x", authors: ["t"],
+            async start(ctx) {
+                ctx.listen(doc, "flaky-ev", () => { throw new Error("listen boom"); });
+                ctx.setTimeout(async () => { await 0; throw new Error("async timer boom"); }, 0);
+                ctx.reportError(new Error("own boom"), "custom");
+                await 0;
+                throw new Error("late start boom");
+            },
+        }));
+        U.startPlugin("Flaky");
+        await sleep(30);
+        const before = U.pluginErrorStats().find(e => e.name === "Flaky");
+        for (let i = 0; i < 12; i++) doc.dispatchEvent(new w.Event("flaky-ev"));
+        await sleep(30);
+        const after = U.pluginErrorStats().find(e => e.name === "Flaky");
+        U.openSettings();
+        await sleep(80);
+        [...(uiOf(doc, `${px}root`)?.querySelectorAll("button, [role=tab]") ?? [])].find(b => b.textContent === "All")?.click();
+        await sleep(50);
+        const badge = uiOf(doc, `${px}root`)?.querySelector(`[data-uspp-${ID}-plugin-errors="Flaky"]`)?.textContent ?? null;
+        U.closeAllModals();
+        out.runtimeErrors = {
+            before: before && { count: before.count, tripped: before.tripped },
+            after: after && { count: after.count, tripped: after.tripped, where: after.last?.where },
+            started: U.plugins.Flaky.started, startError: U.plugins.Flaky.startError ?? null,
+            notice: U.getNotificationHistory().some(n => n.title === "Flaky was turned off"),
+            badge, diag: U.collectDiagnostics().includes("Runtime errors: Flaky ×"),
+        };
+        logs.splice(0);
+    }
     finish();
 
     function finish() {

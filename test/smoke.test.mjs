@@ -343,6 +343,13 @@ test("渲染型注入点、菜单补丁、拦截器、命令和快捷键、搜�
     assert.equal(m.startError, "kaboom");
     assert.deepEqual(m.diag, { name: true, failed: true, noValues: true });
     assert.deepEqual(m.boot.failed, ["Breaker"]);
+    // 运行期错误:ctx 的监听、定时器(含 async)、async start() 和 ctx.reportError 都记到插件名下;出错太多本页停掉并提示
+    assert.deepEqual(data.runtimeErrors, {
+        before: { count: 3, tripped: false },
+        // 第 10 次出错时停掉,监听随之撤掉,之后的事件不再计数
+        after: { count: 10, tripped: true, where: "listen:flaky-ev" },
+        started: false, startError: null, notice: true, badge: "Turned off after 10 errors", diag: true,
+    });
 });
 
 for (const mode of ["safe", "crash"]) {
@@ -656,7 +663,8 @@ test("同一页面两条基于框架的站点脚本互不影响", () => {
     assert.deepEqual(data.fetch, { hits: ["A:/api/x", "B:/api/x"], foreign: ["/api/x"], page: ["/api/x"], untouched: true });
     assert.deepEqual(data.route, { routes: ["A:/uspp-example/next", "B:/uspp-example/next"], foreign: true, pageKept: true });
     // 设置、存储键、样式、菜单、界面根元素各自独立
-    assert.deepEqual(data.settings, { aStarred: ["onlyA"], bStarred: [], bQuickCss: "", gmA: ["UserscriptPPBoot", "UserscriptPPSettings"], gmB: ["UserscriptPPBoot", "UserscriptPPSettings"], ls: ["UserscriptPP:alpha:settings", "UserscriptPP:beta:settings"] });
+    // 管理器有值变化监听时,网站存储的备份只写 IndexedDB(异步),不写同步的 localStorage
+    assert.deepEqual(data.settings, { aStarred: ["onlyA"], bStarred: [], bQuickCss: "", gmA: ["UserscriptPPBoot", "UserscriptPPSettings"], gmB: ["UserscriptPPBoot", "UserscriptPPSettings"], ls: [] });
     assert.equal(data.styles.bHasA, false);
     assert.deepEqual(data.menus, { a: ["Script alpha settings", "Script alpha: search…", "Script alpha: reload in safe mode", "Example: say hello"], b: ["Script beta settings", "Script beta: search…", "Script beta: reload in safe mode", "Example: say hello"] });
     assert.ok(data.ui.roots.every(t => /^uspp-(alpha|beta)-/.test(t)), data.ui.roots.join(","));
@@ -908,4 +916,26 @@ test("没有菜单命令的管理器(AdGuard):设置入口改放在悬浮按钮�
     assert.equal(data.panel, true, "点悬浮入口应打开设置面板");
     assert.deepEqual(data.gmNotes, ["Sys"]);
     assert.equal(data.diag, "Script manager: AdGuard 7.20 · missing: menu, crossTabSync, clipboard");
+});
+
+test("保存:内容没变时不重写 GM 存储", () => {
+    const { data, errors } = runSite(bundle, "https://example.com/page", "example", { PROFILE: "adguard", SAVE_PROBE: "1" });
+    assert.equal(errors, "none");
+    assert.deepEqual(data.saveProbe, { firstWrites: 1, sameWrites: 0, changedWrites: 1 });
+});
+
+test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {
+    const lines = readFileSync(join(root, "types/index.d.ts"), "utf8").split("\n");
+    const targets = new Set(["UsppApi", "PluginCtx", "PluginDef", "SiteDef", "SettingCommon", "DefinedSettings", "PluginDataStore", "Patch", "PatchReplacement", "PatchHooks"]);
+    const missing = [];
+    let cur = null, depth = 0;
+    lines.forEach((l, i) => {
+        const m = depth === 0 && l.match(/^export interface (\w+)/);
+        if (m) cur = targets.has(m[1]) ? m[1] : null;
+        const mm = cur && depth === 1 && l.match(/^ {4}(?:readonly )?([A-Za-z_]\w*)\??\s*[(:<]/);
+        if (mm && !lines[i - 1].trim().endsWith("*/")) missing.push(`${cur}.${mm[1]}`);
+        depth += (l.match(/{/g) || []).length - (l.match(/}/g) || []).length;
+        if (depth === 0) cur = null;
+    });
+    assert.deepEqual(missing, [], "这些公开成员缺少 /** */ 注释");
 });

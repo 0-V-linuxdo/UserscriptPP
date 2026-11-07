@@ -9,6 +9,7 @@ import { subscribe } from "./events.js";
 import { addSlotItem, removeSlotItem, onSlotChange } from "./slots.js";
 import { patchMethod } from "./patcher.js";
 import { dataStoreFor } from "./datastore.js";
+import { guard, reportPluginError } from "./plugin-errors.js";
 
 const logger = new Logger("Scope", "#a5b4fc");
 const scopes = new Map(); // 插件名 -> 作用域
@@ -42,40 +43,54 @@ function createScope(name) {
         register(once);
         return once;
     };
+    const g = (where, fn) => guard(name, where, fn);
+    const t = (where, fn) => guard(name, where, fn, true);
+    const wrapHooks = (kind, hooks) => hooks && typeof hooks === "object"
+        ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`${kind}:${k}`, v)])) : hooks;
+    // 注入点内容的点击处理(onClick / onSelect)出错也归到插件
+    const wrapItem = (slot, def) => def && typeof def === "object"
+        ? { ...def, ...Object.fromEntries(["onClick", "onSelect"].filter(k => typeof def[k] === "function").map(k => [k, g(`${slot}:${k}`, def[k])])) } : def;
     const ctx = {
         plugin: name,
         get signal() { return ac?.signal; },
         get disposed() { return disposed; },
         get pending() { return list.size; },
         register,
-        observe: (selector, opts) => own(observe(selector, opts)),
-        onRouteChange: fn => own(onRouteChange(fn)),
-        onRequest: (m, fn) => own(onRequest(m, fn)),
-        onResponse: (m, fn) => own(onResponse(m, fn)),
-        rewriteRequest: (m, fn) => own(rewriteRequest(m, fn)),
-        rewriteResponse: (m, fn) => own(rewriteResponse(m, fn)),
-        onWebSocket: (m, hooks) => own(onWebSocket(m, hooks)),
-        onEventSource: (m, hooks) => own(onEventSource(m, hooks)),
-        addRenderHook: (type, fn) => own(addRenderHook(type, fn)),
-        subscribe: (ev, fn) => own(subscribe(ev, fn)),
-        onSlotChange: (slot, fn) => own(onSlotChange(slot, fn)),
-        addSlotItem: (slot, id, def) => { addSlotItem(slot, id, def); return own(() => removeSlotItem(slot, id)); },
-        patch: (obj, method, hooks) => own(patchMethod(obj, method, hooks)),
+        // 插件给的回调都包一层,出错记到本插件名下(见 plugin-errors.js)。返回值有意义的(网络改写、渲染钩子、方法补丁)照常抛给调用方
+        observe: (selector, opts = {}) => own(observe(selector, { ...opts, added: g("observe", opts.added), removed: g("observe", opts.removed) })),
+        onRouteChange: fn => own(onRouteChange(g("route", fn))),
+        onRequest: (m, fn) => own(onRequest(m, g("onRequest", fn))),
+        onResponse: (m, fn) => own(onResponse(m, g("onResponse", fn))),
+        rewriteRequest: (m, fn) => own(rewriteRequest(m, t("rewriteRequest", fn))),
+        rewriteResponse: (m, fn) => own(rewriteResponse(m, t("rewriteResponse", fn))),
+        onWebSocket: (m, hooks) => own(onWebSocket(m, wrapHooks("WebSocket", hooks))),
+        onEventSource: (m, hooks) => own(onEventSource(m, wrapHooks("EventSource", hooks))),
+        addRenderHook: (type, fn) => own(addRenderHook(type, t("renderHook", fn))),
+        subscribe: (ev, fn) => own(subscribe(ev, g(`event:${ev}`, fn))),
+        onSlotChange: (slot, fn) => own(onSlotChange(slot, g(`slot:${slot}`, fn))),
+        addSlotItem: (slot, id, def) => { addSlotItem(slot, id, wrapItem(slot, def)); return own(() => removeSlotItem(slot, id)); },
+        patch: (obj, method, hooks) => own(patchMethod(obj, method, hooks && typeof hooks === "object"
+            ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`patch:${method}`, v)])) : hooks)),
         listen: (target, type, fn, opts) => {
             if (!target?.addEventListener) return () => { };
-            target.addEventListener(type, fn, opts);
-            return own(() => target.removeEventListener(type, fn, opts));
+            const wrapped = typeof fn === "function" ? g(`listen:${type}`, fn) : fn;
+            target.addEventListener(type, wrapped, opts);
+            return own(() => target.removeEventListener(type, wrapped, opts));
         },
         setTimeout: (fn, ms, ...a) => {
             let off = null;
-            const id = W.setTimeout(() => { off?.(); try { fn(...a); } catch (e) { logger.error(`${name} 定时器出错`, e); } }, ms);
+            const run = g("timer", fn);
+            const id = W.setTimeout(() => { off?.(); run(...a); }, ms);
             off = own(() => W.clearTimeout(id));
             return off;
         },
         setInterval: (fn, ms, ...a) => {
-            const id = W.setInterval(() => { try { fn(...a); } catch (e) { logger.error(`${name} 定时器出错`, e); } }, ms);
+            const run = g("interval", fn);
+            const id = W.setInterval(() => run(...a), ms);
             return own(() => W.clearInterval(id));
         },
+        /** 插件自己捕获的错误也可以记到自己名下 */
+        reportError: (err, where = "reported") => reportPluginError(name, where, err),
         get data() { return dataStoreFor(name); },
     };
     const dispose = () => {

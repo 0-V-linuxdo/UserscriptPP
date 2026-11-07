@@ -1,5 +1,6 @@
 // Plugins 页(规格 8.2、8.3)
-import { h, useState, useRef, useEffect, useForceUpdate, ErrorBoundary } from "../ui/react.js";
+import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorBoundary } from "../ui/react.js";
+import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
     plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency,
@@ -91,7 +92,11 @@ function Badges({ p }) {
     return out;
 }
 
+const subscribeErrors = fn => { const a = onPluginError(fn), b = onPluginTripped(fn); return () => { a(); b(); }; };
+
 function PluginCard({ p, tracker }) {
+    useSubscription(subscribeErrors);
+    const errs = pluginErrorsOf(p.name);
     const enabled = isPluginEnabled(p.name);
     const starred = listSetting("starredPlugins").includes(p.name);
     const pinned = listSetting("pinnedPlugins").includes(p.name);
@@ -139,6 +144,9 @@ function PluginCard({ p, tracker }) {
             // 插件声明会访问的外部主机,用户在卡片上就能看到
             Array.isArray(p.connect) && p.connect.length > 0 && h("span", { key: "c", className: "uspp-card-timing", title: `This plugin can send requests to: ${p.connect.join(", ")}` }, `Connects to ${p.connect.length > 2 ? `${p.connect.slice(0, 2).join(", ")} +${p.connect.length - 2}` : p.connect.join(", ")}`),
             // 启动较慢(>= 10 ms)的插件在卡片上标出启动耗时,排查页面变卡时一眼能看到
+            // 运行期错误(启动之后的回调出错):数量和最近一条;出错太多被停掉时另标出
+            errs && h("span", { key: "e", className: "uspp-card-timing", "data-uspp-plugin-errors": p.name, "data-error": "true", title: `Last error (${errs.last?.where ?? "?"}): ${errs.last?.message ?? ""}` },
+                errs.tripped ? `Turned off after ${errs.count} errors` : `${errs.count} error${errs.count === 1 ? "" : "s"}`),
             p.started && p.startMs >= SLOW_START_MS && h("span", { key: "t", className: "uspp-card-timing", title: "Time this plugin took to start on this page" }, `${p.startMs} ms`),
             MULTI_SITE && h("span", { key: "s", className: "uspp-site-badge", "data-uspp-plugin-site": p.site ?? "*" }, pluginSiteLabel(p)),
             showPreview && h("button", { key: "p", type: "button", className: "uspp-card-preview", "aria-label": "Preview", title: "Preview", onClick: openConfig },

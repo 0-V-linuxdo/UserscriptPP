@@ -388,15 +388,23 @@ export function installCrossTabSync() {
 }
 
 // ---------- 写入 ----------
-export async function saveNow() {
+// 上次写进 GM 存储 / 网站存储的内容(不含保存时间):没变就不写
+let lastGmBody = null, lastSiteBody = null;
+// 网站存储只是备份(卸载脚本清空 GM 存储后救回用):合并到 2 秒写一次,离开页面时补写
+const SITE_BACKUP_DELAY = 2000;
+let siteTimer = 0, siteJson = null;
+/** localStorage 是同步写入,大块设置会卡主线程;只在管理器没有值变化监听、要靠它的 storage 事件做多标签页同步时才写 */
+const needLsSync = () => !GM.addListener;
+
+export async function saveNow({ flushBackup = false } = {}) {
     if (!ready) return;
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
-    let json;
-    try { json = serialize({ ...PlainSettings, [SAVED_AT]: Date.now() }); } catch (e) { logger.warn("设置序列化失败", e); return; }
+    let body;
+    try { body = serialize(PlainSettings); } catch (e) { logger.warn("设置序列化失败", e); return; }
     dirty.clear();
     pendingSave = false;
-    // 三处都写:卸载脚本清空 GM 存储后,还能从站点存储救回
-    if (GM.set) {
+    const json = body === lastGmBody && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now() });
+    if (GM.set && body !== lastGmBody) {
         try {
             try {
                 const r = GM.set(STORAGE_KEY, JSON.parse(json));
@@ -405,11 +413,29 @@ export async function saveNow() {
                 const r = GM.set(STORAGE_KEY, json);
                 if (r && typeof r.then === "function") await r;
             }
+            lastGmBody = body;
         } catch (e) { logger.warn("写入设置失败", e); }
     }
-    if (!useSiteStorage()) return;
-    try { (W.localStorage || localStorage).setItem(SITE_STORAGE_KEY, json); } catch (e) { logger.debug("写入 localStorage 备份失败", e); }
-    try { await idbSet(SITE_STORAGE_KEY, json); } catch (e) { logger.debug("写入 IndexedDB 备份失败", e); }
+    if (!useSiteStorage() || body === lastSiteBody) { if (flushBackup) await flushSiteBackup(); return; }
+    siteJson = { body, json };
+    if (flushBackup) await flushSiteBackup();
+    else if (!siteTimer) siteTimer = setTimeout(() => { flushSiteBackup(); }, needLsSync() ? 0 : SITE_BACKUP_DELAY);
+}
+
+async function flushSiteBackup() {
+    clearTimeout(siteTimer);
+    siteTimer = 0;
+    const pending = siteJson;
+    siteJson = null;
+    if (!pending) return;
+    const ls = W.localStorage || localStorage;
+    if (needLsSync()) {
+        try { ls.setItem(SITE_STORAGE_KEY, pending.json); } catch (e) { logger.debug("写入 localStorage 备份失败", e); }
+    } else {
+        // 旧版本写过的 localStorage 副本删掉,免得以后读到过时的一份
+        try { if (ls.getItem(SITE_STORAGE_KEY) != null) ls.removeItem(SITE_STORAGE_KEY); } catch { /* 忽略 */ }
+    }
+    try { await idbSet(SITE_STORAGE_KEY, pending.json); lastSiteBody = pending.body; } catch (e) { logger.debug("写入 IndexedDB 备份失败", e); }
 }
 
 let pendingSave = false;
@@ -419,9 +445,9 @@ const scheduleSave = Object.assign(() => { pendingSave = true; debouncedSave(); 
 /** 离开页面时补存;pagehide 覆盖往返缓存和移动端切走,和 beforeunload 一起只写一次 */
 export function installUnloadSave() {
     const flush = () => {
-        if (!pendingSave) return;
+        if (!pendingSave && !siteJson) return;
         scheduleSave.cancel();
-        saveNow();
+        saveNow({ flushBackup: true });
     };
     W.addEventListener("beforeunload", flush);
     W.addEventListener("pagehide", flush);
