@@ -15,6 +15,8 @@ import { openPalette } from "./Palette.js";
 import { notify } from "../ui/notify.js";
 import { canUpdate, checkForUpdate, installUpdate, noteRunningVersion, maybeAutoCheck } from "../lib/updater.js";
 import { openChangelog } from "./UpdatesTab.js";
+import { canUndoImport, lastImport } from "../lib/backup.js";
+import { runUndoImport } from "./BackupTab.js";
 
 const NAME = "Settings";
 export const MENU_COMMAND_ID = "uspp-settings";
@@ -112,12 +114,14 @@ export default definePlugin({
         { id: "uspp.checkUpdates", name: "Check for updates", keywords: ["update", "version", "upgrade"], when: () => canUpdate(), run: () => checkNow() },
         { id: "uspp.changelog", name: "Show changelog", keywords: ["what's new", "release notes", "version"], run: () => openChangelog() },
         { id: "uspp.reportIssue", name: "Report a problem", description: "Open the issue page with diagnostic info filled in. Nothing is sent until you submit it.", keywords: ["bug", "issue", "support", "feedback"], when: () => !!SUPPORT_URL, run: () => reportIssue() },
+        { id: "uspp.undoImport", name: "Undo last import", description: "Restore the settings you had before the last backup import.", keywords: ["backup", "restore", "revert"], when: () => canUndoImport(), run: () => runUndoImport() },
         { id: "uspp.diagnostics", name: "Copy diagnostic info", description: "Versions, enabled plugins, patch status and recent errors, for bug reports.", keywords: ["debug", "support", "report"], run: () => copyDiagnostics() },
     ],
 
     start() {
         migratePluginSetting(NAME, "showSiteEntry", "showMenu");
         setDebugLogs(settings.store.debugLogs);
+        lastImport().catch(() => { }); // 预读,"Undo last import" 命令据此出现
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", afterStart, { once: true });
         else setTimeout(afterStart, 0);
         // 安全模式:不加载主题和 Quick CSS

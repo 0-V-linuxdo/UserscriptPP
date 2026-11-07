@@ -343,6 +343,12 @@ test("渲染型注入点、菜单补丁、拦截器、命令和快捷键、搜�
     assert.equal(m.startError, "kaboom");
     assert.deepEqual(m.diag, { name: true, failed: true, noValues: true });
     assert.deepEqual(m.boot.failed, ["Breaker"]);
+    // 备份导入:不合法的值改用缺省值并列出,本次构建里没有的插件原样保留;导入前的设置可撤销,撤销一次后没有可撤销的了
+    assert.deepEqual(data.importCheck, {
+        invalid: ["ImportProbe.enabled", "ImportProbe.greeting"],
+        afterImport: { greeting: null, mode: "b", enabledType: "undefined", debugLogs: true, starred: ["Imported"], gone: true },
+        hasUndo: true, undone: false, restored: { greeting: "mine", debugLogs: false }, again: null, undoStored: false,
+    });
     // 运行期错误:ctx 的监听、定时器(含 async)、async start() 和 ctx.reportError 都记到插件名下;出错太多本页停掉并提示
     assert.deepEqual(data.runtimeErrors, {
         before: { count: 3, tripped: false },

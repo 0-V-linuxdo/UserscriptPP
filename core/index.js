@@ -10,7 +10,7 @@ import { makeLazy, proxyLazy } from "./lib/lazy.js";
 import { Settings, PlainSettings, SettingsStore, loadSync, loadAsync, installUnloadSave, installCrossTabSync } from "./lib/settings.js";
 import * as Sites from "./lib/sites.js";
 import { matchesUrl, matchPattern } from "./lib/match.js";
-import { exportSettings, importSettings, parseBackup } from "./lib/backup.js";
+import { exportSettings, importSettings, parseBackup, previewImport, undoImport, lastImport } from "./lib/backup.js";
 import * as P from "./lib/plugins.js";
 import { onPluginTripped, pluginErrorStats } from "./lib/plugin-errors.js";
 import * as T from "./lib/turbopack.js";
@@ -335,7 +335,7 @@ const NAMESPACES = {
         "showNotice", "closeNotice", "notify", "getNotificationHistory", "theme", "highlightCss", "createExternalStore", "createSelectionStore",
         "useExternalStore", "useFiltered", "useAsyncAction", "ErrorBoundary", "openPalette", "closePalette", "renderSlot", "SlotOutlet"],
     settings: ["Settings", "PlainSettings", "SettingsStore", "openSettings", "openSettingsPanel", "closeSettingsPanel", "openPluginSettings",
-        "settingsPages", "registerSettingsPage", "exportSettings", "importSettings", "parseBackup", "exportData", "importData", "DataStore"],
+        "settingsPages", "registerSettingsPage", "exportSettings", "importSettings", "previewImport", "undoImport", "lastImport", "parseBackup", "exportData", "importData", "DataStore"],
     themes: ["getThemes", "addTheme", "addLocalTheme", "updateLocalTheme", "removeTheme", "enableTheme", "disableTheme", "setThemeAllSites",
         "isThemesEnabled", "setThemesEnabled", "isOnlineThemesEnabled", "setOnlineThemesEnabled", "getQuickCss", "setQuickCss",
         "registerStyle", "enableStyle", "disableStyle", "unregisterStyle"],
@@ -419,7 +419,7 @@ function main() {
         openSettings, openSettingsPanel, closeSettingsPanel, openPluginSettings,
         get settingsPages() { return getSettingsPages(); },
         registerSettingsPage: def => ownByCurrent(registerSettingsPage(def)),
-        exportSettings, importSettings, parseBackup, exportData, importData,
+        exportSettings, importSettings, previewImport, undoImport, lastImport, parseBackup, exportData, importData,
         // 打包器(只在使用打包器驱动的站点上有内容)
         addPatch: (patch, pluginName) => T.addPatch(patch, pluginName),
         patches: T.patches,

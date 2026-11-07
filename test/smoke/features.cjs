@@ -416,6 +416,30 @@ const px = `uspp-${ID}-`;
         logs.splice(0);
     }
 
+    // ---------- 备份导入:逐项校验、预览、撤销 ----------
+    {
+        const ps = U.definePluginSettings({
+            greeting: { type: U.OptionType.STRING, default: "hi" },
+            mode: { type: U.OptionType.SELECT, options: [{ label: "A", value: "a", default: true }, { label: "B", value: "b" }] },
+        });
+        U.registerPlugin(U.definePlugin({ name: "ImportProbe", description: "x", authors: ["t"], enabledByDefault: true, settings: ps }));
+        const H = () => U.PlainSettings.plugins.ImportProbe;
+        U.Settings.plugins.ImportProbe.greeting = "mine";
+        await sleep(150);
+        const file = { plugins: { ImportProbe: { enabled: "yes", greeting: 42, mode: "b" }, Settings: { debugLogs: true, starredPlugins: ["Imported"] }, Gone: { x: 1 } } };
+        const pv = U.previewImport(file);
+        await U.importSettings(file);
+        const afterImport = { greeting: H().greeting ?? null, mode: H().mode, enabledType: typeof H().enabled, debugLogs: U.PlainSettings.plugins.Settings.debugLogs, starred: U.PlainSettings.plugins.Settings.starredPlugins, gone: !!U.PlainSettings.plugins.Gone };
+        const last = await U.lastImport();
+        const undone = await U.undoImport();
+        out.importCheck = {
+            invalid: pv.invalid.map(x => `${x.plugin}.${x.key}`).sort(), afterImport, hasUndo: !!last,
+            undone, restored: { greeting: H().greeting, debugLogs: U.PlainSettings.plugins.Settings.debugLogs ?? false },
+            again: await U.undoImport(), undoStored: store.has("UserscriptPPImportUndo") && !!store.get("UserscriptPPImportUndo"),
+        };
+        logs.splice(0);
+    }
+
     // ---------- 运行期错误归到插件、熔断 ----------
     {
         U.registerPlugin(U.definePlugin({

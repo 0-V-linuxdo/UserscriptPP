@@ -464,8 +464,14 @@ export interface UsppApi {
     importData(data: Record<string, { site?: Record<string, any>; global?: Record<string, any> }>): Promise<void>;
     /** 导出设置;标了 sensitive 的设置缺省不含 */
     exportSettings(opts?: { includeSensitive?: boolean }): any;
-    /** 导入设置并按新设置启停插件 */
-    importSettings(data: any): Promise<any>;
+    /** 导入设置:按设置定义逐项校验(不合法的值改用缺省值),导入前的设置先存下来可撤销;返回是否需要刷新 */
+    importSettings(data: any, opts?: { data?: any }): Promise<boolean>;
+    /** 导入前预览:会打开、会关掉的插件,会改变的设置项数,以及会被丢掉的不合法值 */
+    previewImport(data: any): { turnOn: string[]; turnOff: string[]; changed: number; invalid: { plugin: string; key: string; reason: string }[] };
+    /** 撤销上一次导入(7 天内,刷新页面后也可以);没有可撤销的导入时返回 null,否则返回是否需要刷新 */
+    undoImport(): Promise<boolean | null>;
+    /** 可撤销的上一次导入的时间,没有时为 null */
+    lastImport(): Promise<{ at: number } | null>;
     /** 解析备份文件文本 */
     parseBackup(text: string): any;
     // 打包器
@@ -835,7 +841,7 @@ export interface UsppApi {
         | "useExternalStore" | "useFiltered" | "useAsyncAction" | "ErrorBoundary" | "openPalette" | "closePalette" | "renderSlot" | "SlotOutlet">>;
     /** 设置、设置页、备份、插件数据 */
     settings: Readonly<Pick<UsppApi, "Settings" | "PlainSettings" | "SettingsStore" | "openSettings" | "openSettingsPanel" | "closeSettingsPanel" | "openPluginSettings"
-        | "settingsPages" | "registerSettingsPage" | "exportSettings" | "importSettings" | "parseBackup" | "exportData" | "importData" | "DataStore">>;
+        | "settingsPages" | "registerSettingsPage" | "exportSettings" | "importSettings" | "previewImport" | "undoImport" | "lastImport" | "parseBackup" | "exportData" | "importData" | "DataStore">>;
     /** 主题、Quick CSS、样式 */
     themes: Readonly<Pick<UsppApi, "getThemes" | "addTheme" | "addLocalTheme" | "updateLocalTheme" | "removeTheme" | "enableTheme" | "disableTheme" | "setThemeAllSites"
         | "isThemesEnabled" | "setThemesEnabled" | "isOnlineThemesEnabled" | "setOnlineThemesEnabled" | "getQuickCss" | "setQuickCss"
