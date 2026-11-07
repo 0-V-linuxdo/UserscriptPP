@@ -17,11 +17,12 @@ import { build } from "esbuild";
 import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync, readFileSync, watch, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname, basename, sep, relative } from "node:path";
+import { join, resolve, dirname, basename, sep, relative, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let hotShim = null; // 热重载代码块用的 JSX 垫片(临时文件)
 /** 框架自己的版本(package.json),和站点脚本的版本分开;写进脚本供诊断和 U.frameworkVersion 使用 */
 const FRAMEWORK_VERSION = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const args = process.argv.slice(2);
@@ -366,12 +367,24 @@ async function bundle(sites, cfg, dev) {
 }
 
 /** 把 sourcemap 内联到脚本末尾:先按元数据头占的行数平移,源文件路径改成 uspp-src:///<脚本 ID>/<相对路径>,DevTools 里按目录列出 */
-function inlineSourcemap(map, prefixText, id) {
+/**
+ * 源文件名只写相对位置,不带构建机上的目录(装到浏览器里的脚本不应泄露本机路径,换目录构建结果也不变):
+ * 站点目录里的写成 sites/<目录名>/…,框架里的相对框架根目录,其余相对当前目录;都不在时只留文件名。
+ * esbuild 的 <define:…> 这类虚拟来源只留名字
+ */
+function sourceName(s, sites, from = outDir) {
+    const abs = resolve(from, s);
+    const name = basename(s);
+    if (name.startsWith("<")) return name;
+    if (abs === hotShim) return "jsx-shim.js";
+    const inside = base => { const r = relative(base, abs); return r && !r.startsWith("..") && !isAbsolute(r) ? r.split(sep).join("/") : null; };
+    for (const site of sites) { const r = inside(site.dir); if (r) return `sites/${basename(site.dir)}/${r}`; }
+    return inside(root) ?? inside(process.cwd()) ?? `external/${name}`;
+}
+
+function inlineSourcemap(map, prefixText, id, sites = []) {
     const shift = (prefixText.match(/\n/g) || []).length;
-    const sources = map.sources.map(s => {
-        const rel = relative(process.cwd(), resolve(outDir, s)).split(sep).join("/");
-        return `uspp-src:///${id}/${rel.replace(/^(\.\.\/)+/, "")}`;
-    });
+    const sources = map.sources.map(s => `uspp-src:///${id}/${sourceName(s, sites)}`);
     const out = { ...map, sources, mappings: ";".repeat(shift) + map.mappings };
     return `//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(out)).toString("base64")}\n`;
 }
@@ -410,7 +423,7 @@ async function buildAll() {
         const head = header(cfg, sites, dev, grants.used);
         mkdirSync(outDir, { recursive: true });
         const prefix = head.text + "\n";
-        writeFileSync(join(outDir, `${head.base}.user.js`), prefix + code + (map ? inlineSourcemap(map, prefix, cfg.id) : ""));
+        writeFileSync(join(outDir, `${head.base}.user.js`), prefix + code + (map ? inlineSourcemap(map, prefix, cfg.id, sites) : ""));
         writeFileSync(join(outDir, `${head.base}.meta.js`), head.text);
         console.log(`${head.base}.user.js  ${(code.length / 1024).toFixed(1)} KB  v${cfg.version || VERSION}  脚本 ID ${cfg.id}  站点:${sites.map(x => x.id).join(", ")}${cfg.channel ? `  渠道 ${cfg.channel}` : ""}`);
         if (!dev || variants.length === 1) console.log(`  @connect ${connectHosts(cfg, dev, sites).join(" ") || "(无)"}(插件用 U.fetchExternal、在线主题访问别的主机时,在 userscript.json 的 connect / themeHosts 里加上)`);
@@ -518,7 +531,6 @@ async function pushHot(hot, files, dirs) {
 
 /** 单个插件打成一段代码:页面上用 new Function("U", code) 执行,返回插件定义(或 U => 定义)。
  *  插件只能引入自己目录里的文件和 node_modules;引入了核心文件时不能单独替换(核心模块在页面上已有一份)。 */
-let hotShim = null;
 async function bundlePluginChunk(entry, id) {
     if (!hotShim) {
         hotShim = join(mkdtempSync(join(tmpdir(), "uspp-hot-")), "jsx-shim.js");
@@ -536,7 +548,9 @@ async function bundlePluginChunk(entry, id) {
         legalComments: "none",
         ...JSX,
         inject: [hotShim],
-        sourcemap: "inline",
+        // 外置后改写来源名再内联,和整条脚本一样不带构建机目录
+        sourcemap: "external",
+        outfile: join(root, "uspp-hot-chunk.js"),
         resolveExtensions: [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json"],
         define: { __USPP_DEV__: "true" },
         plugins: [scopeNames(id, [join(root, "plugins"), ...dirsOfEntry(entry)])],
@@ -544,6 +558,14 @@ async function bundlePluginChunk(entry, id) {
     });
     const core = Object.keys(res.metafile.inputs).map(p => resolve(root, p)).filter(p => p.startsWith(join(root, "core") + sep));
     if (core.length) throw new Error(`引入了核心文件 ${relative(root, core[0])}`);
-    return `${res.outputFiles[0].text}\nreturn __usppHotChunk.default;`;
+    const js = res.outputFiles.find(f => f.path.endsWith(".js")).text.replace(/\n\/\/# sourceMappingURL=\S+\n?$/, "\n");
+    const mapFile = res.outputFiles.find(f => f.path.endsWith(".map"));
+    let inline = "";
+    if (mapFile) {
+        const map = JSON.parse(mapFile.text);
+        map.sources = map.sources.map(x => `uspp-src:///${id}/${sourceName(x, dirsOfEntry(entry).map(dir => ({ dir })), root)}`);
+        inline = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString("base64")}\n`;
+    }
+    return `${js}${inline}\nreturn __usppHotChunk.default;`;
 }
 const dirsOfEntry = entry => [resolve(dirname(entry), "..", "..")];

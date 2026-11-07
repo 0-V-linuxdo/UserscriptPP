@@ -884,3 +884,17 @@ test("@license 缺省 GPL-3.0-or-later;插件声明的 connect 写进 @connect",
     build("--site-dir", dir, "--out", join(repo, "dist"));
     assert.match(readFileSync(join(repo, "dist", "lic.meta.js"), "utf8"), /@license\s+GPL-3\.0-only\n/);
 });
+
+test("开发构建的 sourcemap 不带构建机目录,换目录构建结果不变", () => {
+    const decode = file => JSON.parse(Buffer.from(readFileSync(file, "utf8").match(/base64,(\S+)\n$/)[1], "base64").toString());
+    const a = externalSite({ id: "srcmap", name: "S", namespace: "x:s", match: ["*://s.example/*"] });
+    const b = externalSite({ id: "srcmap", name: "S", namespace: "x:s", match: ["*://s.example/*"] });
+    const ma = decode(join(a.out, "srcmap.dev.user.js")), mb = decode(join(b.out, "srcmap.dev.user.js"));
+    assert.deepEqual(ma.sources, mb.sources);
+    for (const s of ma.sources) {
+        assert.ok(s.startsWith("uspp-src:///srcmap/"), s);
+        assert.ok(!s.includes("..") && !s.includes(tmpdir()) && !s.includes(root), `来源名不应带本机目录:${s}`);
+    }
+    assert.ok(ma.sources.includes("uspp-src:///srcmap/sites/example/plugins/ExampleHello/index.js"));
+    assert.ok(ma.sources.includes("uspp-src:///srcmap/<define:__USPP_SCRIPT__>"));
+});
