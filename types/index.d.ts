@@ -417,14 +417,16 @@ export interface UsppApi {
     plugins: Record<string, Plugin>;
     /** 运行时登记一个插件;返回是否登记成功(同名已存在等情况为 false) */
     registerPlugin(def: PluginDef): boolean;
-    /** 启动插件,并把用户开关记为打开(Plugins 页和实际状态一致);返回是否启动成功 */
+    /** 把用户开关记为打开并按条件启动(安全模式、启动阶段未到时不启动;清掉上次失败和熔断的记录);返回现在是否在运行 */
     startPlugin(name: string | Plugin): boolean;
-    /** 停止插件,并把用户开关记为关闭 */
+    /** 把用户开关记为关闭并停下;必需插件、仍被别的启用插件依赖的插件不停,返回 false */
     stopPlugin(name: string | Plugin): boolean;
     /** 用户开关是否打开(必需插件和被依赖的插件总是 true) */
     isPluginEnabled(name: string): boolean;
     /** 把用户开关取反并随之启停;必需插件和被依赖的插件不变 */
     togglePlugin(name: string, enabled?: boolean): void;
+    /** 插件当前状态:running 运行中、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖被停掉、missing 没有这个插件 */
+    pluginPhase(name: string | Plugin): "running" | "idle" | "waiting" | "safeMode" | "failed" | "tripped" | "blocked" | "missing";
     /** 定义插件(只做类型标注,原样返回) */
     definePlugin<T extends PluginDef>(def: T): T;
     /** 定义插件设置;返回的 store 读写都会存盘 */

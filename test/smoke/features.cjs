@@ -473,6 +473,42 @@ const px = `uspp-${ID}-`;
         };
         logs.splice(0);
     }
+
+    // ---------- 开关与实际运行:意图 / 期望 / 实际 ----------
+    {
+        const runs = name => !!U.plugins[name]?.started;
+        // 出错太多被停掉的插件:开关显示为关;点一下是重新启动,不把用户的开关改成关
+        const tripped = { phase: U.pluginPhase("Flaky") ?? null };
+        U.togglePlugin("Flaky");
+        tripped.restarted = runs("Flaky");
+        tripped.intent = U.PlainSettings.plugins.Flaky.enabled;
+        U.stopPlugin("Flaky");
+        // 依赖:A 依赖 B;打开 A 时 B 跟着运行但不写进 B 的设置,关掉 A 后 B 停下
+        let bStops = 0;
+        let bctx = null;
+        U.registerPlugin(U.definePlugin({ name: "DepB", description: "x", authors: ["t"], start(ctx) { bctx = ctx; }, stop() { bStops++; } }));
+        U.registerPlugin(U.definePlugin({ name: "DepA", description: "x", authors: ["t"], dependencies: ["DepB"], start() { } }));
+        U.startPlugin("DepA");
+        const dep = { a: runs("DepA"), b: runs("DepB"), bStored: U.PlainSettings.plugins.DepB.enabled ?? null, locked: U.togglePlugin("DepB") === false && runs("DepB") };
+        U.stopPlugin("DepA");
+        Object.assign(dep, { aAfter: runs("DepA"), bAfter: runs("DepB"), bStops });
+        // 开关从别处改的(别的标签页同步、导入):本页跟着启停
+        U.Settings.plugins.DepA.enabled = true;
+        dep.syncedOn = runs("DepA") && runs("DepB");
+        U.Settings.plugins.DepA.enabled = false;
+        dep.syncedOff = !runs("DepA") && !runs("DepB");
+        // 依赖被熔断:依赖它的也停下,并且不会被悄悄重启
+        U.startPlugin("DepA");
+        for (let i = 0; i < 10; i++) bctx.reportError(new Error("dep boom"), "test");
+        dep.trippedDep = { a: runs("DepA"), b: runs("DepB"), phaseA: U.pluginPhase("DepA") ?? null };
+        U.stopPlugin("DepA");
+        // 启动到一半失败:调用 stop 收尾
+        let halfStops = 0;
+        U.registerPlugin(U.definePlugin({ name: "Half", description: "x", authors: ["t"], start() { throw new Error("half"); }, stop() { halfStops++; } }));
+        U.startPlugin("Half");
+        out.lifecycle = { tripped, dep, half: { stops: halfStops, phase: U.pluginPhase("Half") ?? null } };
+        logs.splice(0);
+    }
     finish();
 
     function finish() {

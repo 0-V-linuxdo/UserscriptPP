@@ -1,6 +1,6 @@
 // 诊断信息:汇总成一段文字,方便用户提问题时附上。不含设置值
 import { W, GM, missingCapabilities, VERSION, FRAMEWORK_VERSION, BUILD_TYPE, SCRIPT_ID, SCRIPT_NAME, API_VERSION } from "../env.js";
-import { plugins, isPluginEnabled, slowestStarts } from "./plugins.js";
+import { plugins, isPluginEnabled, pluginPhase, slowestStarts } from "./plugins.js";
 import { getSite } from "./sites.js";
 import { recentLogs } from "./logger.js";
 import { pluginErrorStats } from "./plugin-errors.js";
@@ -16,7 +16,7 @@ export function collectDiagnostics() {
     const ua = (() => { try { return W.navigator.userAgent; } catch { return "?"; } })();
     const all = Object.values(plugins);
     const enabled = all.filter(p => isPluginEnabled(p.name));
-    const failed = enabled.filter(p => !p.started);
+    const failed = enabled.filter(p => pluginPhase(p) === "failed");
     let patches = null;
     try { patches = patchSummary(); } catch { patches = null; }
     const lines = [
@@ -26,7 +26,7 @@ export function collectDiagnostics() {
         `Site: ${getSite().id} · ${(() => { try { return W.location.origin + W.location.pathname; } catch { return "?"; } })()}`,
         `Safe mode: ${isSafeMode() ? `on (${safeModeReason()})` : "off"}`,
         `Plugins: ${enabled.length} enabled of ${all.length}`,
-        `Enabled: ${enabled.map(p => p.name + (p.started ? "" : " (not started)")).join(", ") || "none"}`,
+        `Enabled: ${enabled.map(p => p.name + (p.started ? "" : ` (${pluginPhase(p)})`)).join(", ") || "none"}`,
         `Failed to start: ${failed.map(p => `${p.name}: ${p.startError?.message ?? "unknown"}`).join("; ") || "none"}`,
     ];
     const blocked = blockedRequests();

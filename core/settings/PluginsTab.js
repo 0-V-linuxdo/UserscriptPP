@@ -3,7 +3,7 @@ import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorB
 import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
-    plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency, pendingReload,
+    plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf,
 } from "../lib/plugins.js";
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
@@ -81,7 +81,7 @@ function useReloadTracker() {
 
 function Badges({ p }) {
     const out = [];
-    const failed = !p.required && isPluginEnabled(p.name) && !p.started;
+    const failed = !p.started && !!p.startError;
     const icon = (key, tip, Icon, cls) => h(Tooltip, { key, content: tip }, h("span", { className: classes("uspp-icon-badge", cls) }, h(Icon, { size: 3.5 })));
     if (failed) out.push(icon("fail", "This plugin failed to start", WarningIcon, "uspp-warn"));
     if (pendingReload.has(p.name)) out.push(icon("reload", "Its settings changed after this page started; reload the page to apply them", WarningIcon));
@@ -101,7 +101,19 @@ function PluginCard({ p, tracker }) {
     const enabled = isPluginEnabled(p.name);
     const starred = listSetting("starredPlugins").includes(p.name);
     const pinned = listSetting("pinnedPlugins").includes(p.name);
-    const failed = !p.required && enabled && !p.started;
+    const failed = !p.started && !!p.startError;
+    const byDependency = isEnabledAsDependency(p.name);
+    const onToggle = async () => {
+        // 关掉一个别的插件还要用的插件:先问是否一起关(否则它会作为依赖继续运行)
+        const needs = enabled && !byDependency && !p.tripped ? dependentsOf(p.name) : [];
+        if (needs.length) {
+            const ok = await confirmDialog({ title: `Turn off ${p.name}?`, body: `${needs.join(", ")} ${needs.length === 1 ? "needs" : "need"} it. Turn ${needs.length === 1 ? "it" : "them"} off too?`, confirmText: "Turn off all", danger: true });
+            if (!ok) return;
+            for (const n of needs) if (isPluginEnabled(n) && !isEnabledAsDependency(n)) { togglePlugin(n); tracker.onToggled(plugins[n]); }
+        }
+        if (isPluginEnabled(p.name) === enabled) togglePlugin(p.name);
+        tracker.onToggled(p);
+    };
     const hasSettings = getVisibleSettings(p).length > 0;
     const showPreview = hasPreview(p);
     const Icon = p.icon || PlugIcon;
@@ -135,10 +147,13 @@ function PluginCard({ p, tracker }) {
                 ? h(Tooltip, { key: "switch", content: `Required for ${SCRIPT_NAME} to work, can't be turned off` },
                     h("span", { className: "uspp-switch-lock", "data-uspp-locked": "true" },
                         h(Switch, { checked: true, disabled: true, label: p.name })))
-                : h(Switch, {
-                    key: "switch", checked: enabled, disabled: isEnabledAsDependency(p.name), label: p.name,
-                    onChange: () => { togglePlugin(p.name); tracker.onToggled(p); },
-                }),
+                : byDependency
+                    // 只因为被别的插件依赖才运行:锁住开关,说明是谁需要它
+                    ? h(Tooltip, { key: "switch", content: `Needed by ${dependentsOf(p.name).join(", ")}` },
+                        h("span", { className: "uspp-switch-lock", "data-uspp-locked": "dependency" },
+                            h(Switch, { checked: true, disabled: true, label: p.name })))
+                    // 出错太多被本页停掉的:开关显示为关,打开就是重新启动
+                    : h(Switch, { key: "switch", checked: enabled && !p.tripped, label: p.name, onChange: onToggle }),
         ],
         footer: [
             h("span", { key: "a", className: "uspp-card-authors" }, (p.authors || []).join(", ") || "\u00A0"),

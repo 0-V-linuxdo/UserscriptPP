@@ -42,7 +42,10 @@ export const OptionType = Object.freeze({
 });
 
 export const plugins = {};
-const depEnabled = new Set();      // 作为依赖被拉起的插件
+// 插件状态分三层:意图(设置里的 enabled,只由用户操作、导入、跨标签页同步改)、
+// 期望(每次从意图推导:依赖、安全模式、启动阶段、熔断)、实际(started / startError / tripped)。
+// 只有 reconcile 按"期望"去启停插件;各处改了意图或条件后调用它,不自己直接启停
+const reachedStages = new Set();   // 已经到过的启动阶段
 const runtimeRegistered = new Set();
 const otherSites = new Set();      // 已定义、但不适用于当前网站的插件(设置要保留)
 const cleanup = new Map();         // name -> 函数数组
@@ -96,17 +99,59 @@ setDefaultResolver((pluginName, key) => {
 });
 
 // ---------- 判定 ----------
-export function isPluginEnabled(name) {
+const supported = p => !(p.chromiumOnly && !isChromium());
+
+/** 用户意图:必需插件、设置里的开关,没设过时用 enabledByDefault */
+function intentOn(name) {
     const p = plugins[name];
-    if (!p) return false;
-    if (p.chromiumOnly && !isChromium()) return false;
-    if (p.required || depEnabled.has(name)) return true;
+    if (!p || !supported(p)) return false;
+    if (p.required) return true;
     const stored = PlainSettings.plugins[name]?.enabled;
     if (typeof stored === "boolean") return stored;
     return !!p.enabledByDefault;
 }
 
-export const isEnabledAsDependency = name => depEnabled.has(name);
+/** 被意图开启的插件(直接或间接)依赖、因而要一起运行的插件;每次从当前设置推导,不写设置 */
+export function dependencyClosure() {
+    const need = new Set();
+    const visit = name => {
+        for (const d of plugins[name]?.dependencies || []) {
+            if (!plugins[d] || need.has(d)) continue;
+            need.add(d);
+            visit(d);
+        }
+    };
+    for (const name of Object.keys(plugins)) if (intentOn(name)) visit(name);
+    return need;
+}
+
+export function isPluginEnabled(name) {
+    const p = plugins[name];
+    if (!p || !supported(p)) return false;
+    return intentOn(name) || dependencyClosure().has(name);
+}
+
+/** 只因为被别的插件依赖才运行(自己没开):界面上锁住开关,显示"由谁需要" */
+export const isEnabledAsDependency = name => !!plugins[name] && supported(plugins[name]) && !intentOn(name) && dependencyClosure().has(name);
+
+/** 直接或间接依赖 name、并且正在启用的插件 */
+export function dependentsOf(name) {
+    const out = [];
+    for (const p of Object.values(plugins)) {
+        if (p.name === name || !isPluginEnabled(p.name)) continue;
+        if (allDependencies(p).has(name)) out.push(p.name);
+    }
+    return out;
+}
+
+function allDependencies(p, seen = new Set()) {
+    for (const d of p.dependencies || []) {
+        if (seen.has(d) || !plugins[d]) continue;
+        seen.add(d);
+        allDependencies(plugins[d], seen);
+    }
+    return seen;
+}
 
 export const pluginHasPatches = p => Array.isArray(p.patches) && p.patches.length > 0;
 export const needsRestart = p => (pluginHasPatches(p) && !!getSite().driver) || !!p.requiresRestart;
@@ -149,28 +194,13 @@ export function addPlugin(def, { runtime = false } = {}) {
 export const patchesNotApplicable = new Set();
 const siteHasDriver = () => !!getSite().driver;
 
-/** 按当前设置会被拉起的依赖(含间接依赖);只计算,不改设置 */
-export function dependencyClosure() {
-    const need = new Set();
-    const visit = name => {
-        for (const d of plugins[name]?.dependencies || []) {
-            if (!plugins[d] || need.has(d)) continue;
-            need.add(d);
-            visit(d);
-        }
-    };
-    for (const name of Object.keys(plugins)) if (isPluginEnabled(name)) visit(name);
-    return need;
-}
-
 /** 按当前设置,本页要打补丁的插件:{ 插件名: true(生效)| false(开发构建只校验) } */
 export function patchPlan() {
     const plan = {};
     if (!siteHasDriver()) return plan;
-    const deps = dependencyClosure();
     for (const p of Object.values(plugins)) {
         if (!pluginHasPatches(p) || runtimeRegistered.has(p.name)) continue;
-        const on = (isPluginEnabled(p.name) || deps.has(p.name)) && (!isSafeMode() || !!p.required);
+        const on = isPluginEnabled(p.name) && (!isSafeMode() || !!p.required);
         if (on || __USPP_DEV__) plan[p.name] = on;
     }
     return plan;
@@ -302,10 +332,8 @@ export function startPlugin(p, stack = []) {
         const d = plugins[dep];
         if (!d) { logger.warn(`${p.name} 依赖的插件 ${dep} 不存在`); return false; }
         if (!d.started) {
-            if (!isPluginEnabled(dep)) {
-                depEnabled.add(dep);
-                Settings.plugins[dep].enabled = true;
-            }
+            // 出错太多被停掉的依赖不在这里悄悄重启
+            if (d.tripped) { logger.warn(`${p.name} 依赖的插件 ${dep} 因出错太多已停用,本页不启动 ${p.name}`); return false; }
             if (!startPlugin(d, [...stack, p.name])) return false;
         }
     }
@@ -359,7 +387,7 @@ export function startPlugin(p, stack = []) {
             track(p.name, () => SettingsStore.removePrefixChangeListener(prefix, fn));
         }
         p.started = true;
-        p.trippedByErrors = false;
+        p.tripped = false;
         // 启动耗时(含 start()、注入点、命令登记;不含先启动的依赖),Plugins 页和诊断信息里列出慢的插件
         p.startMs = Math.round((perfNow() - t0) * 10) / 10;
         logger.debug(`已启动 ${p.name}(${p.startMs} ms)`);
@@ -368,6 +396,8 @@ export function startPlugin(p, stack = []) {
         logger.error(`启动 ${p.name} 失败`, e);
         p.startError = e;
         noteFailed(p.name);
+        // 启动到一半失败:让插件有机会撤掉已经做了的事
+        try { runAs(p.name, () => p.stop?.(ctx)); } catch (e2) { logger.error(`${p.name}.stop 出错`, e2); }
         runCleanup(p.name);
         closeScope(p.name);
         if (p.managedStyle && !pluginHasPatches(p)) disableStyle(p.managedStyle);
@@ -380,8 +410,9 @@ export function startPlugin(p, stack = []) {
 setBreaker(name => {
     const p = plugins[name];
     if (!p || p.required || !p.started) return false;
-    stopPlugin(p);
-    p.trippedByErrors = true;
+    p.tripped = true;
+    // 依赖它的插件也停下(它们离了它多半也不能正常工作),刷新后照常启动
+    reconcile([name, ...dependentsOf(name)]);
     return true;
 });
 
@@ -409,34 +440,121 @@ export function stopPlugin(p) {
     return true;
 }
 
-// 公共 API 的启停:同时记下开关状态,Plugins 页的开关和实际运行状态一致
-function syncEnabled(p, enabled) {
-    if (p.required || depEnabled.has(p.name) || isPluginEnabled(p.name) === enabled) return;
-    Settings.plugins[p.name].enabled = enabled;
-    dispatch(Events.PLUGIN_TOGGLE, { name: p.name, enabled });
+// ---------- 收敛:让实际运行状态跟上期望 ----------
+/** 期望运行:已启用、安全模式允许、启动阶段已到、自己和依赖都没被熔断 */
+function shouldRun(p) {
+    if (!isPluginEnabled(p.name)) return false;
+    if (isSafeMode() && !p.required) return false;
+    if (!reachedStages.has(p.startAt ?? StartAt.Init)) return false;
+    if (p.tripped) return false;
+    for (const d of allDependencies(p)) if (plugins[d]?.tripped) return false;
+    return true;
 }
+
+/** 插件当前所处状态,界面和诊断都从这里读 */
+export function pluginPhase(p) {
+    if (typeof p === "string") p = plugins[p];
+    if (!p) return "missing";
+    if (p.started) return "running";
+    if (p.tripped) return "tripped";
+    if (p.startError) return "failed";
+    if (!isPluginEnabled(p.name)) return "idle";
+    if (isSafeMode() && !p.required) return "safeMode";
+    if (!reachedStages.has(p.startAt ?? StartAt.Init)) return "waiting";
+    if ([...allDependencies(p)].some(d => plugins[d]?.tripped)) return "blocked";
+    return "idle";
+}
+
+let reconciling = false, reconcileAgain = null;
+/**
+ * 按期望启停 names 里的插件(缺省为全部):该停的先停(依赖它的先停),该启动的再启动(依赖先启动)。
+ * 启动失败过的不自动重试(用户重新打开开关时重试)。返回这次启动失败的插件
+ */
+export function reconcile(names) {
+    const set = new Set(names || Object.keys(plugins));
+    if (reconciling) { for (const n of set) (reconcileAgain ??= new Set()).add(n); return []; }
+    reconciling = true;
+    const failed = [];
+    try {
+        let todo = set;
+        while (todo) {
+            reconcileAgain = null;
+            const list = [...todo].map(n => plugins[n]).filter(Boolean);
+            const toStop = list.filter(p => p.started && !shouldRun(p));
+            // 依赖别人的先停:按依赖深度从深到浅
+            toStop.sort((a, b) => allDependencies(b).size - allDependencies(a).size);
+            for (const p of toStop) stopPlugin(p);
+            for (const p of list) {
+                if (p.started || p.startError || !shouldRun(p)) continue;
+                if (!startPlugin(p)) failed.push(p);
+            }
+            todo = reconcileAgain;
+        }
+    } finally { reconciling = false; reconcileAgain = null; }
+    return failed;
+}
+
+/** 改了 name 的开关时受影响的插件:它自己、它的依赖、依赖它的 */
+const affectedBy = name => {
+    const p = plugins[name];
+    if (!p) return [];
+    const out = new Set([name, ...allDependencies(p)]);
+    for (const q of Object.values(plugins)) if (allDependencies(q).has(name)) out.add(q.name);
+    return [...out];
+};
+
+// 开关不管是本页改的、别的标签页同步来的还是导入备份改的,都只经这里收敛
+SettingsStore.addPrefixChangeListener("plugins.", (_, path) => {
+    const parts = path.split(".");
+    if (parts.length !== 3 || parts[2] !== "enabled" || !plugins[parts[1]]) return;
+    reconcile(affectedBy(parts[1]));
+});
+
+/** 用户重新打开:清掉上次失败、熔断的记录,这次重新试 */
+function clearFailure(p) {
+    p.startError = null;
+    if (p.tripped) { p.tripped = false; resetBreaker(p.name); }
+}
+
+function setIntent(p, on) {
+    clearFailure(p);
+    if (intentOn(p.name) === on) { reconcile(affectedBy(p.name)); return; }
+    Settings.plugins[p.name].enabled = on; // 设置变更会触发 reconcile
+}
+
+// 公共 API 的启停:改的是用户意图,Plugins 页的开关和实际运行状态一致
 export function startPluginApi(p) {
     if (typeof p === "string") p = plugins[p];
-    const ok = startPlugin(p);
-    if (ok) syncEnabled(p, true);
-    return ok;
+    if (!p) return false;
+    const was = isPluginEnabled(p.name);
+    setIntent(p, true);
+    if (!was && isPluginEnabled(p.name)) dispatch(Events.PLUGIN_TOGGLE, { name: p.name, enabled: true });
+    return !!p.started;
 }
 export function stopPluginApi(p) {
     if (typeof p === "string") p = plugins[p];
-    const ok = stopPlugin(p);
-    if (ok && p) syncEnabled(p, false);
-    return ok;
+    if (!p || p.required) return false;
+    const was = isPluginEnabled(p.name);
+    setIntent(p, false);
+    if (was && !isPluginEnabled(p.name)) dispatch(Events.PLUGIN_TOGGLE, { name: p.name, enabled: false });
+    return !p.started;
 }
 
 /** 返回 true 表示需要刷新页面 */
 export function togglePlugin(name) {
     const p = plugins[name];
     if (!p) return false;
-    if (p.required || depEnabled.has(name)) return false;
-    const next = !isPluginEnabled(name);
-    Settings.plugins[name].enabled = next;
-    if (next) startPlugin(p); else stopPlugin(p);
-    dispatch(Events.PLUGIN_TOGGLE, { name, enabled: next });
+    if (p.required || isEnabledAsDependency(name)) return false;
+    // 出错太多被停掉的插件:开关显示为关,点一下是重新启动,不改用户的开关
+    if (p.tripped && intentOn(name)) {
+        clearFailure(p);
+        reconcile(affectedBy(name));
+        dispatch(Events.PLUGIN_TOGGLE, { name, enabled: true });
+        return false;
+    }
+    const next = !intentOn(name);
+    setIntent(p, next);
+    dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
     return needsRestart(p);
 }
 
@@ -508,32 +626,20 @@ export function recordKnownPlugins() {
     for (const name of Object.keys(plugins)) if (known[name] == null) known[name] = now;
 }
 
-/** 已启用插件的依赖一并启用;依赖只能指向同站点或通用插件 */
+/** 检查依赖是否都在(依赖只能指向同站点或通用插件);依赖的启用由 dependencyClosure 推导,不写进设置 */
 export function enforceDependencies() {
     for (const p of Object.values(plugins)) {
         if (!isPluginEnabled(p.name)) continue;
-        for (const d of p.dependencies || []) {
-            const dep = plugins[d];
-            if (!dep) { logger.warn(`${p.name} 依赖的插件 ${d} 不在当前站点`); continue; }
-            if (!isPluginEnabled(d)) {
-                depEnabled.add(d);
-                Settings.plugins[d].enabled = true;
-            }
-        }
+        for (const d of p.dependencies || []) if (!plugins[d]) logger.warn(`${p.name} 依赖的插件 ${d} 不在当前站点`);
     }
     // Settings.enabled 读到 false 时强制改回 true
     if (PlainSettings.plugins.Settings && PlainSettings.plugins.Settings.enabled === false) Settings.plugins.Settings.enabled = true;
 }
 
+/** 启动阶段到了:这个阶段的插件按期望启动;返回启动失败的 */
 export function startAllAt(stage) {
-    const failed = [];
-    for (const p of Object.values(plugins)) {
-        if ((p.startAt ?? StartAt.Init) !== stage) continue;
-        if (!isPluginEnabled(p.name) || p.started) continue;
-        if (isSafeMode() && !p.required) continue;
-        if (!startPlugin(p)) failed.push(p);
-    }
-    return failed;
+    reachedStages.add(stage);
+    return reconcile(Object.values(plugins).filter(p => (p.startAt ?? StartAt.Init) === stage).map(p => p.name));
 }
 
 /** 导出备份时要去掉的设置项(定义上标了 sensitive) */

@@ -407,6 +407,7 @@ function main() {
         stopPlugin: P.stopPluginApi,
         isPluginEnabled: P.isPluginEnabled,
         togglePlugin: P.togglePlugin,
+        pluginPhase: P.pluginPhase,
         definePlugin: P.definePlugin,
         definePluginSettings: P.definePluginSettings,
         migratePluginSettings: P.migratePluginSettings,

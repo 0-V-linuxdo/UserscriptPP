@@ -2,7 +2,7 @@
 import { VERSION, GM } from "../env.js";
 import { Logger } from "./logger.js";
 import { PlainSettings, serialize, parseStored, saveNow, replaceAll } from "./settings.js";
-import { plugins, isPluginEnabled, startPlugin, stopPlugin, needsRestart, sensitiveKeys, OptionType } from "./plugins.js";
+import { plugins, isPluginEnabled, reconcile, needsRestart, sensitiveKeys, OptionType } from "./plugins.js";
 import { dispatch, Events } from "./events.js";
 import { exportData, importData } from "./datastore.js";
 
@@ -161,9 +161,10 @@ async function apply(data, pluginData) {
         const now = isPluginEnabled(name);
         if (was === now) continue;
         if (needsRestart(p)) reload = true;
-        try { if (now) startPlugin(p); else stopPlugin(p); } catch (e) { logger.error(`导入后启停 ${name} 失败`, e); }
         dispatch(Events.PLUGIN_TOGGLE, { name, enabled: now });
     }
+    // 开关的变更在 replaceAll 发通知时已经收敛过;这里再收敛一次,兜住只改了依赖关系、没改开关的情况
+    try { reconcile(); } catch (e) { logger.error("导入后启停插件失败", e); }
     await saveNow({ flushBackup: true });
     if (pluginData) { try { await importData(pluginData); } catch (e) { logger.error("导入插件数据失败", e); } }
     if (reload) dispatch(Events.RELOAD_NEEDED, { reason: "import" });
