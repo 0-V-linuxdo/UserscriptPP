@@ -5,8 +5,11 @@
 //   node scripts/check-patches.mjs --site-dir <目录> --url https://站点/   再拉取线上页面和全部分块(含懒加载分块),逐条测试补丁
 //   node scripts/check-patches.mjs --site-dir <目录> --chunks <目录>        用保存在本地的分块文件测试(*.js,递归)
 //
-// 其他参数:--json(输出 JSON)、--limit <n>(最多取多少个分块,缺省 3000)、--strict(提示也算失败)。
-// 有错误时退出码为 1;在 GitHub Actions 里会输出 ::error / ::warning 标注。
+// 其他参数:--json(输出 JSON)、--limit <n>(最多取多少个分块,缺省 3000)、--strict(提示也算失败)、
+// --min-modules <n>(线上检查至少要取到多少个模块,缺省 1)、--max-fetch-failures <比例>(取不到的分块最多占多少,缺省 0.2)、
+// --allow-offline(线上 / 本地分块一个模块都没取到时退回静态检查,而不是失败)。
+// 有错误时退出码为 1;要求了线上检查却没取到足够的模块、或取不到的分块太多,也算错误(退出码 1)。
+// 在 GitHub Actions 里会输出 ::error / ::warning 标注。
 // 页面里也有同样的检查:开发构建的 uspp_<ID>.checkPatches()(还会检查查找器)。
 import { readdirSync, statSync, existsSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +35,11 @@ const chunkDirs = argValues("--chunks").map(p => resolve(p));
 const limit = +(argValues("--limit")[0] ?? 3000);
 const asJson = flag("--json");
 const strict = flag("--strict");
+const allowOffline = flag("--allow-offline");
+const minModules = Math.max(1, +(argValues("--min-modules")[0] ?? 1) || 1);
+const maxFetchFailures = +(argValues("--max-fetch-failures")[0] ?? 0.2);
+// 要求了线上检查(给了 --url 或 --chunks):模式由参数决定,不由取没取到模块决定
+const wantLive = !!url || chunkDirs.length > 0;
 const isCI = process.env.GITHUB_ACTIONS === "true";
 
 if (!siteDirs.length) {
@@ -142,7 +150,7 @@ if (chunkDirs.length) {
     }
 }
 if (url && sites.some(s => s.driver === "webpack")) {
-    crawl = await crawlWebpack(new URL(url), sites.find(s => s.driver === "webpack").driverOptions?.global);
+    crawl = { ...await crawlWebpack(new URL(url), sites.find(s => s.driver === "webpack").driverOptions?.global), webpack: true };
 } else if (url) {
     const site = sites.find(s => s.driver) || sites[0];
     const chunkPath = site?.driverOptions?.chunkPath || "/_next/static/chunks/";
@@ -224,7 +232,16 @@ async function crawlWebpack(base, global) {
 }
 
 // ---------- 检查 ----------
-const live = sources.size > 0;
+// 缺少证据就失败:要求了线上检查却没取到模块(或取不到的分块太多),不能悄悄退回静态检查后报"通过"
+const fetchProblems = [];
+if (wantLive) {
+    if (sources.size < minModules) fetchProblems.push(`只取到 ${sources.size} 个模块,少于要求的 ${minModules} 个`);
+    // turbopack 的爬取把取不到的也算进 chunks;webpack 的 chunks 只算取到的
+    const tried = !crawl ? 0 : crawl.webpack ? crawl.chunks + crawl.failed.length : crawl.chunks;
+    if (crawl && crawl.failed.length && crawl.failed.length / tried > maxFetchFailures) fetchProblems.push(`${crawl.failed.length} / ${tried} 个分块取不到,超过 ${Math.round(maxFetchFailures * 100)}%`);
+}
+const offline = wantLive && sources.size === 0 && allowOffline;
+const live = wantLive && sources.size > 0;
 const loadErrors = entries.filter(e => e.loadError);
 const valid = entries.filter(e => !e.loadError);
 const report = live
@@ -238,6 +255,9 @@ const report = live
     })();
 report.mode = live ? "live" : "lint";
 report.crawl = crawl;
+// --allow-offline 时没取到模块不算错误,只提示
+report.fetchProblems = offline ? [] : fetchProblems;
+if (offline) report.offline = fetchProblems;
 report.loadErrors = loadErrors.map(e => ({ plugin: e.plugin, error: e.loadError }));
 
 // GitHub Actions 标注:按 match / find 的源码在插件文件里找行号
@@ -257,12 +277,16 @@ else {
     console.log(`${live ? `线上检查(${s.modules} 个模块${crawl ? `,${crawl.chunks} 个分块${crawl.failed.length ? `,${crawl.failed.length} 个取不到` : ""}${crawl.truncated ? ",已到上限" : ""}` : ""})` : "静态检查"}:${s.total} 条补丁,通过 ${s.ok},失败 ${s.failed},提示 ${s.warnings}`);
     for (const r of report.results) if (r.status !== "ok" || r.issues.length) console.log(describeResult(r));
     for (const e of loadErrors) console.log(`${e.plugin}:载入插件失败\n    ${e.loadError.split("\n")[0]}`);
+    for (const p of report.fetchProblems) console.log(`线上检查不完整:${p}`);
+    if (offline) console.log(`没取到任何模块,按 --allow-offline 退回静态检查:${fetchProblems.join(";")}`);
+    if (crawl?.failed.length) console.log(`取不到的分块:${crawl.failed.slice(0, 10).map(f => (typeof f === "string" ? f : f.path)).join(", ")}${crawl.failed.length > 10 ? ` 等 ${crawl.failed.length} 个` : ""}`);
     if (live) {
         const slow = report.results.filter(r => r.ms > 0).sort((a, b) => b.ms - a.ms).slice(0, 5);
         if (slow.length) console.log(`最慢的 find:${slow.map(r => `${r.plugin}#${r.index} ${r.ms}ms`).join(",")}`);
     }
 }
 if (isCI) {
+    for (const p of report.fetchProblems) console.log(`::error::线上检查不完整:${p}`);
     const byKey = new Map(valid.map(e => [`${e.plugin}#${e.index}`, e]));
     for (const r of report.results) {
         const e = byKey.get(`${r.plugin}#${r.index}`);
@@ -272,4 +296,4 @@ if (isCI) {
         if (["notFound", "partial", "groupReverted", "syntaxError"].includes(r.status)) console.log(`::error file=${file},line=${lineOf(e.file, [].concat(e.patch.find)[0])}::${describeResult(r).replaceAll("\n", "%0A")}`);
     }
 }
-process.exit(failed.length || loadErrors.length ? 1 : 0);
+process.exit(failed.length || loadErrors.length || report.fetchProblems.length ? 1 : 0);

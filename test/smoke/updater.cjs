@@ -21,6 +21,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const sys = {};
     if (process.env.LAST) sys.lastVersion = process.env.LAST;
     if (process.env.CHECKED) sys.lastUpdateCheck = Number(process.env.CHECKED);
+    if (process.env.FAILS) { sys.updateCheckFailures = Number(process.env.FAILS); sys.lastUpdateFailedAt = Number(process.env.FAILED_AT); }
     store.set("UserscriptPPSettings", { plugins: { Settings: sys } });
     w.GM_getValue = (k, d) => store.has(k) ? store.get(k) : d;
     w.GM_setValue = (k, v) => store.set(k, v);
@@ -32,7 +33,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const requests = [];
     w.GM_xmlhttpRequest = o => {
         requests.push(o.url.replace(/[?&]t=\d+/, ""));
-        // 发布地址上的 .meta.js:版本 1.3.0
+        // 发布地址上的 .meta.js:版本 1.3.0;FAIL=1 时服务器出错
+        if (process.env.FAIL) { setTimeout(() => o.onload({ status: 500, responseText: "", responseHeaders: "" }), 5); return; }
         setTimeout(() => o.onload({ status: 200, responseText: "// ==UserScript==\n// @name  x\n// @version   1.3.0\n// ==/UserScript==\n", responseHeaders: "" }), 5);
     };
     const opened = [];
@@ -52,7 +54,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     if (avail?.onClick) avail.onClick();
     out.opened = opened.slice();
     out.storedVersion = store.get("UserscriptPPSettings")?.plugins?.Settings?.lastVersion;
-    out.checkedAt = typeof store.get("UserscriptPPSettings")?.plugins?.Settings?.lastUpdateCheck;
+    const storedSys = () => store.get("UserscriptPPSettings")?.plugins?.Settings ?? {};
+    out.checkedAt = typeof storedSys().lastUpdateCheck;
+    out.failures = storedSys().updateCheckFailures ?? 0;
+    // 同时发起两次检查(例如自动检查还没回来时点了"检查更新"):共用同一次请求和结果
+    if (process.env.CONCURRENT) {
+        const before = requests.length;
+        const [r1, r2] = await Promise.all([U.checkForUpdate(), U.checkForUpdate()]);
+        out.concurrent = { same: r1 === r2, current: r1?.current ?? null, latest: r1?.latest ?? null, requests: requests.length - before };
+    }
     U.openSettings({ tab: "updates" });
     await sleep(80);
     out.status = uiOf(doc, `${px}root`)?.querySelector(`[data-${px}update-status]`)?.textContent ?? null;

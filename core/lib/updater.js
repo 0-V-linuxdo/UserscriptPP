@@ -55,27 +55,46 @@ export const canUpdate = () => !!UPDATE_INFO?.meta;
 
 const sys = () => Settings.plugins.Settings;
 
-export async function checkForUpdate() {
-    if (!canUpdate()) return { hasUpdate: false, error: "no-update-url" };
-    if (state.checking) return state.last;
+/** 检查失败后,下次自动检查前要等多久(按连续失败次数);不超过正常的检查间隔 */
+export const RETRY_AFTER = [5 * 60 * 1000, 30 * 60 * 1000, 2 * 60 * 60 * 1000, 6 * 60 * 60 * 1000];
+let inflight = null;
+
+/**
+ * 检查更新。正在检查时再调用,拿到的是同一次检查的结果(不会先返回上一次的结果或 null)。
+ * 只有成功的检查才记为"上次检查";失败记下连续失败次数,自动检查按 RETRY_AFTER 退避重试
+ */
+export function checkForUpdate() {
+    if (!canUpdate()) return Promise.resolve({ hasUpdate: false, error: "no-update-url" });
+    if (inflight) return inflight;
     state.checking = true;
     emit();
-    let res;
-    try {
-        const r = await fetchExternal(`${UPDATE_INFO.meta}${UPDATE_INFO.meta.includes("?") ? "&" : "?"}t=${Date.now()}`);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const latest = parseMetaVersion(await r.text());
-        if (!latest) throw new Error("no @version in meta file");
-        res = { at: Date.now(), current: VERSION, latest, hasUpdate: compareVersions(latest, VERSION) > 0, error: null };
-    } catch (e) {
-        logger.debug("检查更新失败", e);
-        res = { at: Date.now(), current: VERSION, latest: null, hasUpdate: false, error: String(e?.message ?? e) };
-    }
-    state.checking = false;
-    state.last = res;
-    try { sys().lastUpdateCheck = res.at; } catch { /* 设置未就绪 */ }
-    emit();
-    return res;
+    inflight = (async () => {
+        let res;
+        try {
+            const r = await fetchExternal(`${UPDATE_INFO.meta}${UPDATE_INFO.meta.includes("?") ? "&" : "?"}t=${Date.now()}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const latest = parseMetaVersion(await r.text());
+            if (!latest) throw new Error("no @version in meta file");
+            res = { at: Date.now(), current: VERSION, latest, hasUpdate: compareVersions(latest, VERSION) > 0, error: null };
+        } catch (e) {
+            logger.debug("检查更新失败", e);
+            res = { at: Date.now(), current: VERSION, latest: null, hasUpdate: false, error: String(e?.message ?? e) };
+        }
+        try {
+            const s = sys();
+            if (res.error) {
+                s.updateCheckFailures = (Number(PlainSettings.plugins.Settings?.updateCheckFailures) || 0) + 1;
+                s.lastUpdateFailedAt = res.at;
+            } else {
+                s.lastUpdateCheck = res.at;
+                if (PlainSettings.plugins.Settings?.updateCheckFailures) s.updateCheckFailures = 0;
+            }
+        } catch { /* 设置未就绪 */ }
+        state.last = res;
+        return res;
+    })();
+    inflight.finally(() => { inflight = null; state.checking = false; emit(); });
+    return inflight;
 }
 
 /** 打开新版本的 .user.js:脚本管理器会弹出它自己的安装确认页 */
@@ -96,13 +115,16 @@ export function noteRunningVersion() {
     return { from: prev, to: VERSION, entries };
 }
 
-/** 到期就检查(缺省每天一次);有新版本时回调 */
+/** 到期就检查(缺省每天一次);上次失败的按 RETRY_AFTER 提前重试;有新版本时回调 */
 export async function maybeAutoCheck(onUpdate, { every = DAY } = {}) {
     if (!canUpdate()) return null;
     const plain = PlainSettings.plugins.Settings ?? {};
     if (plain.autoCheckUpdates === false) return null;
-    const lastAt = Number(plain.lastUpdateCheck) || 0;
-    if (Date.now() - lastAt < every) return null;
+    const fails = Number(plain.updateCheckFailures) || 0;
+    if (fails > 0) {
+        const wait = Math.min(every, RETRY_AFTER[Math.min(fails, RETRY_AFTER.length) - 1]);
+        if (Date.now() - (Number(plain.lastUpdateFailedAt) || 0) < wait) return null;
+    } else if (Date.now() - (Number(plain.lastUpdateCheck) || 0) < every) return null;
     const res = await checkForUpdate();
     if (res?.hasUpdate) onUpdate?.(res);
     return res;

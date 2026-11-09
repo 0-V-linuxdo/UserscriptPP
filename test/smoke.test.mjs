@@ -75,6 +75,7 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.menus, ["Grok Reference (Userscript++) settings", "Grok Reference (Userscript++): search…", "Grok Reference (Userscript++): reload in safe mode"]);
         assert.deepEqual(data.crossTab, { pinned: ["RemotePin"], css: "local{}", notified: 1 });
         assert.deepEqual(data.crossTabDelete, { deleted: true, notified: ["deleted"], keptDirty: 1, pluginKept: true });
+        assert.deepEqual(data.toggleBack, { before: "on", synced: "off", after: "on" }, "别的标签页改过之后,本页改回原值也要写进存储");
         assert.deepEqual(data.backup, { exportedToken: false, token: "s3cret", color: "blue", format: "userscript-pp-settings" });
         assert.equal(data.writable, true);
         assert.deepEqual(data.bridge, { keys: ["plugins", "scriptId", "site", "version"], noApi: [], selfMethod: "function", selfStable: true, selfHidden: ["undefined", "undefined", "undefined"], hostSelf: "function", frozen: true });
@@ -173,6 +174,9 @@ test("补丁检查器:本地分块和线上地址(含懒加载分块)", async ()
     // --url:拉页面、按 <script src> 取分块,再从模块源码里找到懒分块
     const server = http.createServer((q, res) => {
         if (q.url === "/") return res.end('<html><script src="/_next/static/chunks/a.js"></script></html>');
+        // 页面改版后没有分块脚本 / 分块全部取不到
+        if (q.url === "/empty/") return res.end("<html><p>maintenance</p></html>");
+        if (q.url === "/gone/") return res.end('<html><script src="/_next/static/chunks/missing.js"></script></html>');
         const m = /^\/_next\/static\/chunks\/(.+)$/.exec(q.url);
         if (m && existsSync(join(dir, m[1]))) return res.end(readFileSync(join(dir, m[1])));
         res.statusCode = 404; res.end();
@@ -186,6 +190,20 @@ test("补丁检查器:本地分块和线上地址(含懒加载分块)", async ()
         assert.equal(live.crawl.chunks, 2);
         assert.equal(live.summary.modules, 20);
         assert.equal(live.summary.failed, 0);
+        // 要求了线上检查却一个模块都没取到:不能悄悄退回静态检查后报通过
+        const check = (path, ...extra) => new Promise(resolve => execFile(process.execPath, [join(root, "scripts/check-patches.mjs"), "--site", "grok", "--url", url + path, ...extra], { encoding: "utf8", env: { ...process.env, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1", GITHUB_ACTIONS: "" } }, (e, stdout, stderr) => resolve({ code: e?.code ?? 0, out: stdout + stderr })));
+        for (const path of ["empty/", "gone/"]) {
+            const r = await check(path);
+            assert.equal(r.code, 1, `${path}: ${r.out}`);
+            assert.match(r.out, /线上检查不完整:只取到 0 个模块/);
+        }
+        assert.match((await check("gone/")).out, /取不到的分块:.*missing\.js/);
+        // 显式允许离线时才退回静态检查
+        const offline = await check("empty/", "--allow-offline");
+        assert.equal(offline.code, 0, offline.out);
+        assert.match(offline.out, /按 --allow-offline 退回静态检查/);
+        // 要求的模块数比取到的多:也算失败
+        assert.equal((await check("", "--min-modules", "100")).code, 1);
     } finally { server.close(); }
 });
 
@@ -579,6 +597,19 @@ test("更新:版本变了提示更新日志,到期自动检查,发现新版本�
     const b = run({ LAST: "1.2.0", CHECKED: String(Date.now()) });
     assert.deepEqual(b.notes, []);
     assert.deepEqual(b.requests, []);
+    // 检查进行中再检查:共用同一次请求,结果带当前版本(不会是上一次的结果或 null)
+    const cc = run({ LAST: "1.2.0", CHECKED: String(Date.now()), CONCURRENT: "1" });
+    assert.deepEqual(cc.concurrent, { same: true, current: "1.2.0", latest: "1.3.0", requests: 1 });
+    // 检查失败:不记为"上次检查",记下失败次数;退避时间内不再自动检查,过了就重试
+    const f = run({ LAST: "1.2.0", FAIL: "1" });
+    assert.deepEqual(f.requests, ["https://dl.example/scripts/upd.meta.js"]);
+    assert.equal(f.checkedAt, "undefined");
+    assert.equal(f.failures, 1);
+    assert.deepEqual(run({ LAST: "1.2.0", FAILS: "1", FAILED_AT: String(Date.now()) }).requests, []);
+    const retry = run({ LAST: "1.2.0", FAILS: "1", FAILED_AT: String(Date.now() - 6 * 60 * 1000) });
+    assert.deepEqual(retry.requests, ["https://dl.example/scripts/upd.meta.js"]);
+    assert.equal(retry.checkedAt, "number");
+    assert.equal(retry.failures, 0);
     // 首次运行不提示更新日志
     const c = run({ CHECKED: String(Date.now()) });
     assert.deepEqual(c.notes, []);
@@ -927,7 +958,7 @@ test("没有菜单命令的管理器(AdGuard):设置入口改放在悬浮按钮�
 test("保存:内容没变时不重写 GM 存储", () => {
     const { data, errors } = runSite(bundle, "https://example.com/page", "example", { PROFILE: "adguard", SAVE_PROBE: "1" });
     assert.equal(errors, "none");
-    assert.deepEqual(data.saveProbe, { firstWrites: 1, sameWrites: 0, changedWrites: 1 });
+    assert.deepEqual(data.saveProbe, { firstWrites: 1, sameWrites: 0, changedWrites: 1, staleWrites: 1, stored: ["a", "b"] });
 });
 
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {

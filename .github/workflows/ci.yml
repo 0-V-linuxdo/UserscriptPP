@@ -44,6 +44,9 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 这一步会执行线上站点的代码;不把有写权限的令牌留在 .git/config 里
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22

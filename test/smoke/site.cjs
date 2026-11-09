@@ -74,7 +74,14 @@ if (!process.env.MERGE_CASE) (async () => {
         S.starredPlugins = ["x"]; S.starredPlugins = ["a"]; await sleep(250);
         const w2 = settingsWrites;
         S.starredPlugins = ["a", "b"]; await sleep(250);
-        out.saveProbe = { firstWrites: w1 - w0, sameWrites: w2 - w1, changedWrites: settingsWrites - w2 };
+        const w3 = settingsWrites;
+        // 管理器没有值变化监听(AdGuard):别的标签页悄悄把存储改成别的,本页再写一次和上次相同的内容,也要真的写进去
+        const other = JSON.parse(JSON.stringify(store.get("UserscriptPPSettings")));
+        other.plugins.Settings.starredPlugins = ["other-tab"];
+        store.set("UserscriptPPSettings", other);
+        S.starredPlugins = ["x"]; S.starredPlugins = ["a", "b"]; await sleep(250);
+        const kept = store.get("UserscriptPPSettings");
+        out.saveProbe = { firstWrites: w1 - w0, sameWrites: w2 - w1, changedWrites: w3 - w2, staleWrites: settingsWrites - w3, stored: (typeof kept === "string" ? JSON.parse(kept) : kept).plugins.Settings.starredPlugins };
         console.log(JSON.stringify(out, null, 1));
         console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
         console.log("LOGS:");

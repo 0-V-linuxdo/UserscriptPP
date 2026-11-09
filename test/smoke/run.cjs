@@ -309,6 +309,20 @@ const req = id => root.r(id);
     out.crossTab = { pinned: P.PlainSettings.plugins.Settings.pinnedPlugins, css: P.getQuickCss().css, notified: seen.length };
     const g = P.PlainSettings.plugins.Settings.sites.grok;
     out.crossTabDelete = { deleted: !("zapMe" in g), notified: deletions, keptDirty: g.keepMe, pluginKept: "GrokMessages" in P.PlainSettings.plugins };
+    // 来回切换:本页写过 X,别的标签页改成 Y 并同步过来,本页再改回 X,X 仍要写进存储(不能因为"和上次写的一样"跳过)
+    await sleep(300);
+    P.Settings.plugins.Settings.sites.grok.toggleProbe = "on";
+    await sleep(300);
+    const stored = () => { const v = store.get("UserscriptPPSettings"); return (typeof v === "string" ? JSON.parse(v) : v)?.plugins?.Settings?.sites?.grok?.toggleProbe; };
+    const toggleBefore = stored();
+    const other = JSON.parse(JSON.stringify(store.get("UserscriptPPSettings")));
+    other.plugins.Settings.sites.grok.toggleProbe = "off";
+    store.set("UserscriptPPSettings", other);
+    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, other, true));
+    const toggleSynced = P.PlainSettings.plugins.Settings.sites.grok.toggleProbe;
+    P.Settings.plugins.Settings.sites.grok.toggleProbe = "on";
+    await sleep(300);
+    out.toggleBack = { before: toggleBefore, synced: toggleSynced, after: stored() };
     // 备份:敏感设置默认不导出,导入时文件里为空则保留本机的
     P.registerPlugin(P.definePlugin({ name: "SecretProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ token: { type: P.OptionType.STRING, default: "", sensitive: true }, color: { type: P.OptionType.STRING, default: "" } }) }));
     P.Settings.plugins.SecretProbe.token = "s3cret"; P.Settings.plugins.SecretProbe.color = "red";

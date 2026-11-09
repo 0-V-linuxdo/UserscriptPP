@@ -3,7 +3,7 @@ import { VERSION, BUILD_TYPE } from "../env.js";
 import { h, useSubscription } from "../ui/react.js";
 import { Button, Row, Switch } from "../ui/components.js";
 import { openModal, closeModal, ModalCard } from "../ui/modal.js";
-import { Settings, PlainSettings } from "../lib/settings.js";
+import { Settings, PlainSettings, SettingsStore } from "../lib/settings.js";
 import { CHANGELOG, canUpdate, checkForUpdate, installUpdate, lastCheck, isChecking, subscribeUpdates, compareVersions } from "../lib/updater.js";
 
 const when = t => (t ? new Date(t).toLocaleString() : "never");
@@ -23,8 +23,13 @@ export function openChangelog({ entries = CHANGELOG, title = "What's new" } = {}
     return key;
 }
 
+const AUTO_PATH = "plugins.Settings.autoCheckUpdates";
+/** 自动检查开关改了(本页或别的标签页)时重绘 */
+const subscribeAuto = fn => { SettingsStore.addChangeListener(AUTO_PATH, fn); return () => SettingsStore.removeChangeListener(AUTO_PATH, fn); };
+
 export function UpdatesTab() {
     useSubscription(subscribeUpdates);
+    useSubscription(subscribeAuto);
     const last = lastCheck();
     const checking = isChecking();
     const plain = PlainSettings.plugins.Settings ?? {};

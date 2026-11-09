@@ -310,6 +310,10 @@ const underDirty = path => {
 /** 别的标签页保存的整份设置:逐键合并进内存并照常发出变更通知(不触发写入) */
 export function applyRemote(data) {
     if (!ready || !data || typeof data !== "object") return 0;
+    // 收到的就是存储里现在的内容:之后判断"没变就不写"要和它比,而不是和本页上次写的比。
+    // 不然本页写过 X、别的标签页改成 Y、本页再改回 X 时,会以为 X 已经在存储里而跳过写入
+    try { lastGmBody = serialize(data); } catch { lastGmBody = null; }
+    lastSiteBody = null;
     const changedPaths = [];
     const walk = (target, src, path) => {
         for (const k of Object.keys(src)) {
@@ -388,13 +392,23 @@ export function installCrossTabSync() {
 }
 
 // ---------- 写入 ----------
-// 上次写进 GM 存储 / 网站存储的内容(不含保存时间):没变就不写
+// 存储里现在的内容(不含保存时间):本页写入后,以及收到别的标签页的写入后更新;没变就不写
 let lastGmBody = null, lastSiteBody = null;
 // 网站存储只是备份(卸载脚本清空 GM 存储后救回用):合并到 2 秒写一次,离开页面时补写
 const SITE_BACKUP_DELAY = 2000;
 let siteTimer = 0, siteJson = null;
 /** localStorage 是同步写入,大块设置会卡主线程;只在管理器没有值变化监听、要靠它的 storage 事件做多标签页同步时才写 */
 const needLsSync = () => !GM.addListener;
+
+/** GM 存储里现在那份设置的内容(不含保存时间);读不到或是异步接口时为 null */
+function storedGmBody() {
+    try {
+        const raw = GM.get ? GM.get(STORAGE_KEY) : null;
+        if (raw && typeof raw.then === "function") return null;
+        const data = parseStored(raw);
+        return data ? serialize(data) : null;
+    } catch { return null; }
+}
 
 export async function saveNow({ flushBackup = false } = {}) {
     if (!ready) return;
@@ -403,8 +417,12 @@ export async function saveNow({ flushBackup = false } = {}) {
     try { body = serialize(PlainSettings); } catch (e) { logger.warn("设置序列化失败", e); return; }
     dirty.clear();
     pendingSave = false;
-    const json = body === lastGmBody && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now() });
-    if (GM.set && body !== lastGmBody) {
+    let same = body === lastGmBody;
+    // 没有值变化监听时看不到别的标签页的写入,"和上次写的一样"不代表存储里还是它:读一次存储再确认
+    if (same && !GM.addListener) same = storedGmBody() === body;
+    const writeGm = !!GM.set && !same;
+    const json = !writeGm && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now() });
+    if (writeGm) {
         try {
             try {
                 const r = GM.set(STORAGE_KEY, JSON.parse(json));

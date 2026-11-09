@@ -126,7 +126,7 @@
    node <框架目录>/scripts/check-patches.mjs --site-dir sites/<id> --chunks 保存的分块目录   # 用本地文件测试
    ```
 
-   静态检查会报:正则展开 `\i` 后无法编译、`replace` 引用的 `$n` / `$<name>` 超出捕获组、字符串 `match` 却用了 `$1`、字符串里写了 `\i`、捕获组超过 5 个、匹配串超过 200 字符、贪婪的 `.*`、太短的 `find`。有错误时退出码为 1,在 GitHub Actions 里输出行内标注;`--json` 输出完整报告,`--strict` 让提示也算失败。开发构建的健康报告还会列出最慢的 find(`patchReport().timings`),已停用插件里失配的补丁在 `patchReport().validateMisses`。
+   静态检查会报:正则展开 `\i` 后无法编译、`replace` 引用的 `$n` / `$<name>` 超出捕获组、字符串 `match` 却用了 `$1`、字符串里写了 `\i`、捕获组超过 5 个、匹配串超过 200 字符、贪婪的 `.*`、太短的 `find`。有错误时退出码为 1,在 GitHub Actions 里输出行内标注;`--json` 输出完整报告,`--strict` 让提示也算失败。给了 `--url` / `--chunks` 却一个模块都没取到(页面改版、被拦截、网络失败),或取不到的分块超过 `--max-fetch-failures`(缺省 0.2),也算失败,不会退回静态检查后报通过;`--min-modules <n>` 要求至少取到多少个模块,确实只想做静态检查时加 `--allow-offline`。开发构建的健康报告还会列出最慢的 find(`patchReport().timings`),已停用插件里失配的补丁在 `patchReport().validateMisses`。
 
 8. **配置更新地址并发布**:在 `userscript.json` 里写 `updateBase`(例如你的仓库 raw 地址下的 `dist/`),重新构建,把发布构建的 `.user.js` 和 `.meta.js` 放到该地址。脚本管理器按 `version` 自动更新。
 
