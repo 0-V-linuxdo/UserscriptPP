@@ -7,7 +7,7 @@ import { Logger } from "./lib/logger.js";
 import { diag, diagOn, trace, diagReport, setDiagExtra, DIAG_KEY } from "./lib/diag.js";
 import * as utils from "./lib/utils.js";
 import { makeLazy, proxyLazy } from "./lib/lazy.js";
-import { Settings, PlainSettings, SettingsStore, loadSync, loadAsync, installUnloadSave, installCrossTabSync } from "./lib/settings.js";
+import { Settings, PlainSettings, SettingsStore, loadSync, loadAsync, applyBootSnapshot, installUnloadSave, installCrossTabSync } from "./lib/settings.js";
 import * as Sites from "./lib/sites.js";
 import { matchesUrl, matchPattern } from "./lib/match.js";
 import { exportSettings, importSettings, parseBackup, previewImport, undoImport, lastImport } from "./lib/backup.js";
@@ -541,7 +541,7 @@ function main() {
     }
 
     // ---------- 同步阶段 ----------
-    step("同步读取设置", loadSync);
+    const syncLoaded = step("同步读取设置", loadSync);
     step("注册核心插件", () => P.addPlugin(SettingsPlugin));
     setSettingsOpener(() => openSettings());
     setPaletteOpener((name, key) => { openSettingsPanel({ tab: "plugins" }); openPluginSettings(name, key); });
@@ -574,10 +574,15 @@ function main() {
     if (site.network) step("网络旁路", installNetworkHooks);
     if (site.route) step("路由工具", installRouteWatcher);
 
+    // 补丁只在模块第一次加载时生效:按同步读到的设置(读不到时用启动快照)一次定下,之后不再补登记
+    function registerPatchesOnce() {
+        if (!syncLoaded) step("读取启动快照", applyBootSnapshot);
+        P.registerPatches();
+    }
     // 页面接入工具:只有当前站点声明了打包器驱动才拦截
     if (site.driver === "turbopack") {
         F.setChunkPrefix(site.driverOptions?.chunkPath);
-        step("登记补丁", P.registerPatches);
+        step("登记补丁", registerPatchesOnce);
         if (diag.noHostPatches) trace("hostPatches.skipped");
         else step("登记站点设置入口补丁", registerHostPatches);
         if (diag.noTurbopack) trace("turbopack.skipped");
@@ -586,7 +591,7 @@ function main() {
             step("监视打包器", () => T.watchInstrumentation(20000));
         }
     } else if (site.driver === "webpack") {
-        step("登记补丁", P.registerPatches);
+        step("登记补丁", registerPatchesOnce);
         if (diag.noHostPatches) trace("hostPatches.skipped");
         else step("登记站点设置入口补丁", registerHostPatches);
         // 构建里没有 webpack 站点时 __USPP_WEBPACK__ 为 false,webpack 驱动整个不打进脚本
@@ -626,7 +631,12 @@ function main() {
         }));
         step("记录插件", P.recordKnownPlugins);
         step("强制依赖", P.enforceDependencies);
-        if (site.driver === "turbopack" || site.driver === "webpack") step("登记补丁", P.registerPatches);
+        if (site.driver === "turbopack" || site.driver === "webpack") step("核对补丁计划", () => {
+            const changed = P.checkPatchPlan();
+            if (!changed.length) return;
+            dispatch(Events.RELOAD_NEEDED, { reason: "patches", plugins: changed });
+            notify({ title: "Reload to apply", body: `Settings for ${changed.join(", ")} differ from what this page started with; reload the page to apply them.`, type: "info" });
+        });
         step("启动 Init 插件", () => P.startAllAt(P.StartAt.Init));
 
         const onDom = () => {

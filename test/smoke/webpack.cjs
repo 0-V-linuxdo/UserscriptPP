@@ -103,6 +103,9 @@ if (process.env.DUMP) {
     w.GM_addValueChangeListener = () => 1;
     w.GM_registerMenuCommand = () => 1;
     w.GM_unregisterMenuCommand = () => { };
+    // NOGM=1:管理器不提供同步读取(设置只在站点存储里,异步读);PRESET:页面打开前 localStorage 里已有的内容
+    if (process.env.NOGM) { delete w.GM_getValue; delete w.GM_setValue; delete w.GM_addValueChangeListener; }
+    for (const [k, v] of Object.entries(JSON.parse(process.env.PRESET || "{}"))) w.localStorage.setItem(k, v);
     let foreignSeen = 0;
     if (process.env.FOREIGN) {
         // 别的脚本:访问器形式挂接分块全局,自己的 push 也照常转交
@@ -123,6 +126,12 @@ if (process.env.DUMP) {
             applied: rep.stats.applied, unhooked: !Object.getOwnPropertyDescriptor(w.Function.prototype, "m"),
             plainM: (() => { const f = function () { }; f.m = 5; return f.m === 5 && Object.getOwnPropertyDescriptor(f, "m")?.value === 5; })(),
             pageErrors: errors, logs: logs.filter(l => /^\[(warn|error)\]/.test(l)),
+            ...(process.env.PLAN ? {
+                reload: logs.filter(l => /重新加载页面才生效/.test(l)).map(l => l.replace(/^.*生效:/, "")),
+                boot: w.localStorage.getItem(`UserscriptPP:${ID}:settings:boot`),
+                stored: Object.fromEntries(Object.entries(U.PlainSettings?.plugins ?? {}).map(([n, v]) => [n, v?.enabled])),
+                late: w.__late?.INLINE_LATE ?? null,
+            } : {}),
         }));
         process.exit(0);
     }

@@ -266,11 +266,15 @@ function withoutSame(from, base) {
 }
 
 /** document-start 同步读取:只在 GM_getValue 同步返回有效数据时使用 */
+/** 脚本管理器只有异步读取(Greasemonkey 4、FireMonkey 等)时为 true:同步阶段读不到设置,改用启动快照 */
+let asyncOnlyGm = false;
+const BOOT_KEY = `${SITE_STORAGE_KEY}:boot`;
+
 export function loadSync() {
-    if (!GM.get) return false;
+    if (!GM.get) { asyncOnlyGm = true; return false; }
     try {
         const raw = GM.get(STORAGE_KEY);
-        if (raw && typeof raw.then === "function") return false;
+        if (raw && typeof raw.then === "function") { asyncOnlyGm = true; return false; }
         const data = parseStored(raw);
         if (data) {
             seeRev(data);
@@ -282,6 +286,37 @@ export function loadSync() {
         logger.warn("同步读取设置失败", e);
     }
     return false;
+}
+
+/**
+ * 启动快照:只有异步读取的管理器上,同步阶段拿不到设置,补丁计划却必须在这时定下。
+ * 和 Vencord 网页版一样,在站点 localStorage 里另存一份各插件的开关(只有开关),同步读它。
+ * 由站点驱动的启动流程在选好站点后、登记补丁前调用;同步读取成功时不用它
+ */
+export function applyBootSnapshot() {
+    if (!asyncOnlyGm || !useSiteStorage()) return false;
+    let snap;
+    try { snap = JSON.parse((W.localStorage || localStorage).getItem(BOOT_KEY) || "null"); } catch { return false; }
+    const enabled = snap && typeof snap.enabled === "object" ? snap.enabled : null;
+    if (!enabled) return false;
+    const base = { plugins: {} };
+    for (const [name, on] of Object.entries(enabled)) {
+        if (typeof on !== "boolean") continue;
+        (PlainSettings.plugins[name] ??= {}).enabled = on;
+        base.plugins[name] = { enabled: on };
+    }
+    // 异步读取时这些开关不算"本页新产生的",以读到的完整设置为准
+    syncBase = base;
+    return true;
+}
+
+function writeBootSnapshot() {
+    if (!asyncOnlyGm || !useSiteStorage()) return;
+    const enabled = {};
+    for (const [name, entry] of Object.entries(PlainSettings.plugins || {})) {
+        if (typeof entry?.enabled === "boolean") enabled[name] = entry.enabled;
+    }
+    try { (W.localStorage || localStorage).setItem(BOOT_KEY, JSON.stringify({ enabled })); } catch { /* 忽略 */ }
 }
 
 /** 内容丰富度:设置项数量与数组 / 对象长度,enabled 不计分 */
@@ -335,6 +370,7 @@ export async function loadAsync() {
         logger.info(`设置已从 ${found[0].at ? found[0].name : found.map(f => f.name).join(" + ")} 读取`);
     }
     ready = true;
+    writeBootSnapshot();
     // 启动过程不落盘:只有之后真正改了设置才写
     return found.length > 0;
 }
@@ -481,6 +517,7 @@ export async function saveNow({ flushBackup = false } = {}) {
     if (!ready) return;
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
     let body;
+    writeBootSnapshot();
     let toStore;
     try { toStore = persistable(); body = serialize(toStore); } catch (e) { logger.warn("设置序列化失败", e); return; }
     dirty.clear();

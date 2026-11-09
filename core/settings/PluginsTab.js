@@ -3,7 +3,7 @@ import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorB
 import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
-    plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency,
+    plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency, pendingReload,
 } from "../lib/plugins.js";
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
@@ -84,6 +84,7 @@ function Badges({ p }) {
     const failed = !p.required && isPluginEnabled(p.name) && !p.started;
     const icon = (key, tip, Icon, cls) => h(Tooltip, { key, content: tip }, h("span", { className: classes("uspp-icon-badge", cls) }, h(Icon, { size: 3.5 })));
     if (failed) out.push(icon("fail", "This plugin failed to start", WarningIcon, "uspp-warn"));
+    if (pendingReload.has(p.name)) out.push(icon("reload", "Its settings changed after this page started; reload the page to apply them", WarningIcon));
     if (p.required) out.push(icon("req", `This plugin is required for ${SCRIPT_NAME} to work`, LockIcon));
     if (p.dev) out.push(icon("dev", "Development build only", WrenchIcon));
     if (p.chromiumOnly) out.push(icon("chr", "Chromium only", ChromiumIcon));

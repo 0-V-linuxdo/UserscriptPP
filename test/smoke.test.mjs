@@ -574,6 +574,39 @@ test("webpack 驱动:不写分块全局名,入口块里随运行时一起执行�
     assert.deepEqual(r, { inline: "inline patched", late: "late patched", found: "inline patched", applied: 2, unhooked: true, plainM: true, pageErrors: [], logs: [] });
 });
 
+test("补丁计划:启动时一次定下(含依赖拉起的插件);完整设置读完后不一样的标为重新加载后生效;只有异步读取时用启动快照", () => {
+    const dir = join(tmp("uspp-plan-"), "wpplan");
+    execFileSync(process.execPath, [join(root, "scripts/create.mjs"), "site", "wpplan", "--dir", dir, "--driver", "webpack", "--match", "*://sim.example/*"], { encoding: "utf8" });
+    writeFileSync(join(dir, "plugins/Hello/index.js"), `export default U => U.definePlugin({
+    name: "Hello", description: "x", authors: ["t"],
+    patches: [{ find: "INLINE_ENTRY", replacement: { match: /"inline hello"/, replace: '"inline patched"' } }],
+});
+`);
+    execFileSync(process.execPath, [join(root, "scripts/create.mjs"), "plugin", "Needs", "--site", dir], { encoding: "utf8" });
+    writeFileSync(join(dir, "plugins/Needs/index.js"), `export default U => U.definePlugin({
+    name: "Needs", description: "x", authors: ["t"], enabledByDefault: true, dependencies: ["Hello"],
+    patches: [{ find: "INLINE_LATE", replacement: { match: /"late hello"/, replace: '"late patched"' } }],
+});
+`);
+    const out = tmp("uspp-plan-out-");
+    execFileSync(process.execPath, [join(root, "scripts/build.mjs"), "--site-dir", dir, "--out", out, "--dev"], { encoding: "utf8" });
+    const run = env => JSON.parse(execFileSync(process.execPath, [join(root, "test/smoke/webpack.cjs"), join(out, "wpplan.dev.user.js")], { encoding: "utf8", env: { ...process.env, USPP_ID: "wpplan", INLINE: "1", PLAN: "1", ...env } }).trim().split("\n").pop());
+    // 第一次打开:Hello 没开,但被默认开启的 Needs 依赖,第一次启动补丁就要生效
+    const a = run({});
+    assert.deepEqual({ inline: a.inline, late: a.late, reload: a.reload, errors: a.pageErrors, logs: a.logs }, { inline: "inline patched", late: "late patched", reload: [], errors: [], logs: [] });
+    // 管理器没有同步读取:同步阶段只能按缺省值定计划;读完发现 Needs 被关了,不补救,标为重新加载后生效,并存下启动快照
+    const SK = "UserscriptPP:wpplan:settings";
+    const saved = JSON.stringify({ plugins: { Needs: { enabled: false }, Hello: { enabled: true } } });
+    const b = run({ NOGM: "1", PRESET: JSON.stringify({ [SK]: saved }) });
+    assert.deepEqual({ inline: b.inline, late: b.late, reload: b.reload, errors: b.pageErrors }, { inline: "inline patched", late: "late patched", reload: ["Needs"], errors: [] });
+    assert.deepEqual(JSON.parse(b.boot).enabled, { Needs: false, Hello: true });
+    // 下次打开:按启动快照定计划,和完整设置一致
+    const c = run({ NOGM: "1", PRESET: JSON.stringify({ [SK]: saved, [`${SK}:boot`]: b.boot }) });
+    assert.deepEqual({ inline: c.inline, late: c.late, reload: c.reload, errors: c.pageErrors, logs: c.logs }, { inline: "inline patched", late: "late hello", reload: [], errors: [], logs: [] });
+    // 快照里的开关不算新设置:读完后照旧以存下来的为准
+    assert.deepEqual({ Needs: c.stored.Needs, Hello: c.stored.Hello }, { Needs: false, Hello: true });
+});
+
 test("更新:版本变了提示更新日志,到期自动检查,发现新版本可一键更新;没配更新地址时只有更新日志", () => {
     const repo = tmp("uspp-upd-");
     const dir = join(repo, "example");

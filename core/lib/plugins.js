@@ -149,13 +149,48 @@ export function addPlugin(def, { runtime = false } = {}) {
 export const patchesNotApplicable = new Set();
 const siteHasDriver = () => !!getSite().driver;
 
-/** 为已启用插件登记补丁(幂等);开发构建下已禁用插件以只校验方式登记 */
-export function registerPatches() {
+/** 按当前设置会被拉起的依赖(含间接依赖);只计算,不改设置 */
+export function dependencyClosure() {
+    const need = new Set();
+    const visit = name => {
+        for (const d of plugins[name]?.dependencies || []) {
+            if (!plugins[d] || need.has(d)) continue;
+            need.add(d);
+            visit(d);
+        }
+    };
+    for (const name of Object.keys(plugins)) if (isPluginEnabled(name)) visit(name);
+    return need;
+}
+
+/** 按当前设置,本页要打补丁的插件:{ 插件名: true(生效)| false(开发构建只校验) } */
+export function patchPlan() {
+    const plan = {};
+    if (!siteHasDriver()) return plan;
+    const deps = dependencyClosure();
     for (const p of Object.values(plugins)) {
         if (!pluginHasPatches(p) || runtimeRegistered.has(p.name)) continue;
-        if (!siteHasDriver()) { patchesNotApplicable.add(p.name); continue; }
-        const enabled = isPluginEnabled(p.name) && (!isSafeMode() || p.required);
-        if (!enabled && !__USPP_DEV__) continue;
+        const on = (isPluginEnabled(p.name) || deps.has(p.name)) && (!isSafeMode() || !!p.required);
+        if (on || __USPP_DEV__) plan[p.name] = on;
+    }
+    return plan;
+}
+
+/** 启动时定下的补丁计划:补丁只在模块第一次加载时生效,所以本页只登记这一次,之后不再改 */
+let bootPlan = null;
+export const getBootPlan = () => bootPlan;
+/** 补丁计划和当前设置不一致、要重新加载才生效的插件 */
+export const pendingReload = new Set();
+
+/** 按启动时的设置一次登记补丁(已依赖推导;再次调用不做事);开发构建下已禁用插件以只校验方式登记 */
+export function registerPatches() {
+    if (bootPlan) return;
+    for (const p of Object.values(plugins)) {
+        if (pluginHasPatches(p) && !runtimeRegistered.has(p.name) && !siteHasDriver()) patchesNotApplicable.add(p.name);
+    }
+    bootPlan = patchPlan();
+    for (const [name, enabled] of Object.entries(bootPlan)) {
+        const p = plugins[name];
         p.patches.forEach((patch, i) => {
             try {
                 addPatch(patch, p.name, { checkOnly: !enabled, key: `${p.name}#${i}` });
@@ -164,6 +199,23 @@ export function registerPatches() {
             }
         });
     }
+}
+
+/**
+ * 完整设置读完后核对补丁计划:和启动时不一样的插件(例如别的副本里开关不同)不补打补丁,记为"重新加载后生效"。
+ * 返回这次新发现的插件名
+ */
+export function checkPatchPlan() {
+    if (!bootPlan) return [];
+    const now = patchPlan();
+    const changed = [];
+    for (const name of new Set([...Object.keys(bootPlan), ...Object.keys(now)])) {
+        if (!!bootPlan[name] === !!now[name]) { pendingReload.delete(name); continue; }
+        if (!pendingReload.has(name)) changed.push(name);
+        pendingReload.add(name);
+    }
+    if (changed.length) logger.info(`补丁要重新加载页面才生效:${changed.join(", ")}`);
+    return changed;
 }
 
 // ---------- 注入点 ----------
