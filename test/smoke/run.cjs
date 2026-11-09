@@ -347,6 +347,25 @@ const req = id => root.r(id);
     P.Settings.plugins.Settings.sites.grok.toggleProbe = "after-rev";
     await sleep(300);
     out.rev = { increments: rev2 === rev1 + 1, staleIgnored, entryGone, notified: revDeleted.sort(), next: raw().$rev - rev2, notWrittenBack: !("RevProbe" in raw().plugins) };
+    // 默认值不落盘:和默认值相同的项不存;对象默认值被就地改动不会改到定义;别的标签页缺的项按默认值处理
+    const listDefault = ["a"];
+    P.registerPlugin(P.definePlugin({ name: "DefaultProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ mode: { type: P.OptionType.STRING, default: "auto" }, list: { type: P.OptionType.CUSTOM, default: listDefault } }) }));
+    const dp = P.Settings.plugins.DefaultProbe;
+    dp.mode = "dark";
+    dp.list.push("b");
+    await sleep(300);
+    const storedDp1 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
+    dp.mode = "auto";
+    await sleep(300);
+    const storedDp2 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
+    const fromOther = JSON.parse(JSON.stringify(raw()));
+    fromOther.$rev = raw().$rev + 1;
+    delete fromOther.plugins.DefaultProbe.list;
+    const dpSeen = [];
+    P.SettingsStore.addPrefixChangeListener("plugins.DefaultProbe.", (v, path) => dpSeen.push(`${path}=${JSON.stringify(v)}`));
+    store.set("UserscriptPPSettings", fromOther);
+    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, fromOther, true));
+    out.defaults = { first: storedDp1, second: storedDp2, readMode: dp.mode, definitionUntouched: listDefault.length === 1, remoteList: P.PlainSettings.plugins.DefaultProbe.list, notified: dpSeen };
     // 备份:敏感设置默认不导出,导入时文件里为空则保留本机的
     P.registerPlugin(P.definePlugin({ name: "SecretProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ token: { type: P.OptionType.STRING, default: "", sensitive: true }, color: { type: P.OptionType.STRING, default: "" } }) }));
     P.Settings.plugins.SecretProbe.token = "s3cret"; P.Settings.plugins.SecretProbe.color = "red";

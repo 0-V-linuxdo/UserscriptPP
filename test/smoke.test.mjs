@@ -76,6 +76,7 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.crossTab, { pinned: ["RemotePin"], css: "local{}", notified: 1 });
         assert.deepEqual(data.crossTabDelete, { deleted: true, notified: ["deleted"], keptDirty: 1, pluginKept: true });
         assert.deepEqual(data.toggleBack, { before: "on", synced: "off", after: "on" }, "别的标签页改过之后,本页改回原值也要写进存储");
+        assert.deepEqual(data.defaults, { first: { mode: "dark", list: ["a", "b"] }, second: { list: ["a", "b"] }, readMode: "auto", definitionUntouched: true, remoteList: ["a"], notified: ['plugins.DefaultProbe.list=["a"]'] }, "默认值不落盘:等于默认值的项不存,缺的项按默认值处理,定义里的默认值不被改");
         assert.deepEqual(data.rev, { increments: true, staleIgnored: true, entryGone: true, notified: ["plugins.RevProbe.color=undefined", "plugins.RevProbe.size=undefined"], next: 2, notWrittenBack: true }, "版本号:过时的一份不用,更新的一份能删掉整条插件设置,下次保存接着加一");
         assert.deepEqual(data.backup, { exportedToken: false, token: "s3cret", color: "blue", format: "userscript-pp-settings" });
         assert.equal(data.writable, true);

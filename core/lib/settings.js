@@ -92,7 +92,7 @@ function makeProxy(obj, path) {
                 // plugins.<名>.<键> 读不到时返回默认值并写回内存
                 const parts = full.split(".");
                 if (parts.length === 3 && parts[0] === "plugins") {
-                    const def = defaultResolver(parts[1], parts[2]);
+                    const def = defaultOf(parts[1], parts[2]);
                     if (def !== undefined) {
                         target[key] = def;
                         v = def;
@@ -134,6 +134,33 @@ function reviver(_, v) {
     return v;
 }
 export const serialize = obj => JSON.stringify(obj, replacer);
+
+/** 插件设置的默认值:每次给一份新的(对象默认值被就地修改时不会改到插件定义里的那份) */
+function defaultOf(plugin, key) {
+    const def = defaultResolver(plugin, key);
+    return def !== null && typeof def === "object" ? JSON.parse(serialize(def), reviver) : def;
+}
+const isDefault = (plugin, key, value) => {
+    const def = defaultResolver(plugin, key);
+    return def !== undefined && serialize(def) === serialize(value);
+};
+
+/** 要存下来的内容:插件设置里和默认值相同的项不存(内存里照旧有)。
+ *  这样以后改了默认值,没动过这一项的用户会跟着变;读取时缺的项由默认值补上 */
+function persistable() {
+    const out = { ...PlainSettings };
+    const plugins = PlainSettings.plugins;
+    if (plugins && typeof plugins === "object") {
+        out.plugins = {};
+        for (const [name, entry] of Object.entries(plugins)) {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) { out.plugins[name] = entry; continue; }
+            const kept = {};
+            for (const [k, v] of Object.entries(entry)) if (!isDefault(name, k, v)) kept[k] = v;
+            out.plugins[name] = kept;
+        }
+    }
+    return out;
+}
 
 /** 每份存下来的设置带一个保存时间(毫秒,只作参考)和一个版本号 $rev(每次保存加一,不依赖时钟);读到几份副本时以版本号最大的为准 */
 const SAVED_AT = "$savedAt";
@@ -352,6 +379,18 @@ export function applyRemote(data) {
             if (path === "" && k === "plugins") continue;
             const full = path ? `${path}.${k}` : k;
             if (underDirty(full)) continue;
+            // 插件设置里缺的项是"等于默认值"(保存时不存默认值),不是删掉
+            const parts = full.split(".");
+            if (parts.length === 3 && parts[0] === "plugins") {
+                const def = defaultOf(parts[1], parts[2]);
+                if (def !== undefined) {
+                    if (serialize(target[k]) === serialize(def)) continue;
+                    target[k] = def;
+                    changedPaths.push(full);
+                    emitChange(full, def);
+                    continue;
+                }
+            }
             const gone = target[k];
             delete target[k];
             removed(full, gone);
@@ -442,7 +481,8 @@ export async function saveNow({ flushBackup = false } = {}) {
     if (!ready) return;
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
     let body;
-    try { body = serialize(PlainSettings); } catch (e) { logger.warn("设置序列化失败", e); return; }
+    let toStore;
+    try { toStore = persistable(); body = serialize(toStore); } catch (e) { logger.warn("设置序列化失败", e); return; }
     dirty.clear();
     pendingSave = false;
     let same = body === lastGmBody;
@@ -450,7 +490,7 @@ export async function saveNow({ flushBackup = false } = {}) {
     if (same && !GM.addListener) same = storedGmBody() === body;
     const writeGm = !!GM.set && !same;
     const rev = knownRev + 1;
-    const json = !writeGm && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now(), [REV]: rev });
+    const json = !writeGm && body === lastSiteBody ? null : serialize({ ...toStore, [SAVED_AT]: Date.now(), [REV]: rev });
     if (writeGm) {
         try {
             try {
