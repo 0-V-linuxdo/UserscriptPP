@@ -135,10 +135,17 @@ function reviver(_, v) {
 }
 export const serialize = obj => JSON.stringify(obj, replacer);
 
-/** 接受对象、JSON 字符串、二次编码的 JSON 字符串 */
-/** 每份存下来的设置带一个保存时间(毫秒);读到几份副本时以最新的为准 */
+/** 每份存下来的设置带一个保存时间(毫秒,只作参考)和一个版本号 $rev(每次保存加一,不依赖时钟);读到几份副本时以版本号最大的为准 */
 const SAVED_AT = "$savedAt";
+const REV = "$rev";
+const META_KEYS = [SAVED_AT, REV];
 export const savedAtOf = data => (data && Number(data[SAVED_AT])) || 0;
+export const revOf = data => (data && Number(data[REV])) || 0;
+/** 本页知道的最大版本号:读到的、收到的、自己写的;下次保存用它加一 */
+let knownRev = 0;
+const seeRev = data => { const r = revOf(data); if (r > knownRev) knownRev = r; return r; };
+
+/** 接受对象、JSON 字符串、二次编码的 JSON 字符串 */
 
 export function parseStored(raw) {
     try {
@@ -147,10 +154,12 @@ export function parseStored(raw) {
         if (v && typeof v === "object" && !Array.isArray(v)) {
             // 对象形式也要还原 bigint
             v = JSON.parse(JSON.stringify(v), reviver);
-            // 保存时间戳不算设置:挪到不可枚举的属性上,合并、同步、导出都看不到它
-            const at = Number(v[SAVED_AT]) || 0;
-            delete v[SAVED_AT];
-            Object.defineProperty(v, SAVED_AT, { value: at, enumerable: false, configurable: true });
+            // 保存时间和版本号不算设置:挪到不可枚举的属性上,合并、同步、导出都看不到它们
+            for (const k of META_KEYS) {
+                const n = Number(v[k]) || 0;
+                delete v[k];
+                Object.defineProperty(v, k, { value: n, enumerable: false, configurable: true });
+            }
             if (v.plugins && typeof v.plugins === "object" && Object.keys(v.plugins).length > 0) return v;
         }
     } catch { /* 视为没有 */ }
@@ -237,6 +246,7 @@ export function loadSync() {
         if (raw && typeof raw.then === "function") return false;
         const data = parseStored(raw);
         if (data) {
+            seeRev(data);
             syncBase = JSON.parse(serialize(data), reviver);
             replaceContents(data);
             return true;
@@ -278,7 +288,7 @@ export async function loadAsync() {
     for (const [name, read] of sources) {
         try {
             const data = parseStored(await read());
-            if (data) found.push({ name, data, at: savedAtOf(data), score: richness(data) });
+            if (data) found.push({ name, data, rev: seeRev(data), at: savedAtOf(data), score: richness(data) });
         } catch (e) {
             logger.debug(`从 ${name} 读取失败`, e);
         }
@@ -287,7 +297,8 @@ export async function loadAsync() {
         // 带保存时间的副本里最新的一份为主:它就是最后一次保存的完整设置,其余较旧的副本不再往里补,
         // 不然在别处删掉的设置会被旧副本带回来。旧版本存的副本没有保存时间:排在后面,
         // 全都没有时按旧办法,最丰富的一份为主、其余只补缺(卸载脚本清空 GM 后从站点存储救回)
-        found.sort((a, b) => (b.at - a.at) || (b.score - a.score));
+        // 版本号优先(不受时钟回拨、跨设备时钟不准影响);只有旧版本写的副本才没有版本号,再按保存时间
+        found.sort((a, b) => (b.rev - a.rev) || (b.at - a.at) || (b.score - a.score));
         const data = found[0].data;
         if (!found[0].at) for (const f of found.slice(1)) fillFrom(data, f.data);
         // 就绪前内存里新产生的(插件默认值、早期写入)补进去;同步读取时从(可能较旧的)GM 副本带进来的不补
@@ -310,6 +321,13 @@ const underDirty = path => {
 /** 别的标签页保存的整份设置:逐键合并进内存并照常发出变更通知(不触发写入) */
 export function applyRemote(data) {
     if (!ready || !data || typeof data !== "object") return 0;
+    // 版本号比本页知道的小:是过时的一份(例如经另一个通道晚到的),不用它
+    const rev = revOf(data);
+    if (rev && rev < knownRev) return 0;
+    // 版本号更大:写它的标签页已经看到过本页知道的全部内容,它没有的就是删掉了(包括整条插件设置)。
+    // 没有版本号(旧版本写的)或版本号相同(两页同时保存):整条插件设置和顶层键照旧不删
+    const newer = rev > knownRev;
+    seeRev(data);
     // 收到的就是存储里现在的内容:之后判断"没变就不写"要和它比,而不是和本页上次写的比。
     // 不然本页写过 X、别的标签页改成 Y、本页再改回 X 时,会以为 X 已经在存储里而跳过写入
     try { lastGmBody = serialize(data); } catch { lastGmBody = null; }
@@ -327,16 +345,26 @@ export function applyRemote(data) {
             emitChange(full, b);
         }
         // 别的标签页删掉的键:本地有、收到的没有、本地又没改过的,也删掉;不然本页下次保存会把它写回去。
-        // 顶层和 plugins.<名> 这两层不删:那是整个插件的条目,由各页自己的过期清理负责(另一页可能是没装这个插件的旧版本)
-        if (path === "" || path === "plugins") return;
+        // 顶层和 plugins.<名> 这两层只在收到的版本号更大时才删(见上);plugins 本身不删
+        if (!newer && (path === "" || path === "plugins")) return;
         for (const k of Object.keys(target)) {
             if (Object.prototype.hasOwnProperty.call(src, k)) continue;
+            if (path === "" && k === "plugins") continue;
             const full = path ? `${path}.${k}` : k;
             if (underDirty(full)) continue;
+            const gone = target[k];
             delete target[k];
-            changedPaths.push(full);
-            emitChange(full, undefined);
+            removed(full, gone);
         }
+    };
+    // 删掉的是一整个对象(例如整条插件设置)时逐个叶子发通知,按前缀 "plugins.<名>." 监听的也能收到
+    const removed = (full, gone) => {
+        if (gone && typeof gone === "object" && !Array.isArray(gone) && Object.keys(gone).length) {
+            for (const k of Object.keys(gone)) removed(`${full}.${k}`, gone[k]);
+            return;
+        }
+        changedPaths.push(full);
+        emitChange(full, undefined);
     };
     walk(PlainSettings, data, "");
     if (changedPaths.length) {
@@ -421,7 +449,8 @@ export async function saveNow({ flushBackup = false } = {}) {
     // 没有值变化监听时看不到别的标签页的写入,"和上次写的一样"不代表存储里还是它:读一次存储再确认
     if (same && !GM.addListener) same = storedGmBody() === body;
     const writeGm = !!GM.set && !same;
-    const json = !writeGm && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now() });
+    const rev = knownRev + 1;
+    const json = !writeGm && body === lastSiteBody ? null : serialize({ ...PlainSettings, [SAVED_AT]: Date.now(), [REV]: rev });
     if (writeGm) {
         try {
             try {
@@ -432,6 +461,7 @@ export async function saveNow({ flushBackup = false } = {}) {
                 if (r && typeof r.then === "function") await r;
             }
             lastGmBody = body;
+            if (rev > knownRev) knownRev = rev;
         } catch (e) { logger.warn("写入设置失败", e); }
     }
     if (!useSiteStorage() || body === lastSiteBody) { if (flushBackup) await flushSiteBackup(); return; }
