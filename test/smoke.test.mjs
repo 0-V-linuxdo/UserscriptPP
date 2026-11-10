@@ -76,7 +76,7 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.crossTab, { pinned: ["RemotePin"], css: "local{}", notified: 1 });
         assert.deepEqual(data.crossTabDelete, { deleted: true, notified: ["deleted"], keptDirty: 1, pluginKept: true });
         assert.deepEqual(data.toggleBack, { before: "on", synced: "off", after: "on" }, "别的标签页改过之后,本页改回原值也要写进存储");
-        assert.deepEqual(data.defaults, { first: { mode: "dark", list: ["a", "b"] }, second: { list: ["a", "b"] }, readMode: "auto", definitionUntouched: true, remoteList: ["a"], notified: ['plugins.DefaultProbe.list=["a"]'] }, "默认值不落盘:等于默认值的项不存,缺的项按默认值处理,定义里的默认值不被改");
+        assert.deepEqual(data.defaults, { first: { mode: "dark", list: ["a", "b"] }, second: { mode: "auto", list: ["a", "b"] }, reset: { list: ["a", "b"] }, readMode: "auto", definitionUntouched: true, remoteList: ["a"], notified: ['plugins.DefaultProbe.list=["a"]'] }, "默认值不落盘:明确设成默认值的照存,重置后不存,缺的项按默认值处理,定义里的默认值不被改");
         assert.deepEqual(data.rev, { increments: true, staleIgnored: true, entryGone: true, notified: ["plugins.RevProbe.color=undefined", "plugins.RevProbe.size=undefined"], next: 2, notWrittenBack: true }, "版本号:过时的一份不用,更新的一份能删掉整条插件设置,下次保存接着加一");
         assert.deepEqual(data.backup, { exportedToken: false, token: "s3cret", color: "blue", format: "userscript-pp-settings" });
         assert.equal(data.writable, true);
@@ -407,7 +407,7 @@ test("安全模式:站点就绪后 10 秒内关页面不算没完成的启动", 
     assert.equal(data.boot.pending, 0);
 });
 
-test("设置副本合并:以最后保存的一份为准,删掉的设置不会被旧副本带回来", () => {
+test("设置副本合并:GM 是唯一权威,站点副本只在 GM 为空时救回;删掉的设置不会被旧副本带回来", () => {
     const url = "http://localhost:8080/uspp-example/index.html";
     const merge = c => {
         const { data, errors } = runSite(bundle, url, "example", { MERGE_CASE: JSON.stringify(c) });
@@ -418,8 +418,12 @@ test("设置副本合并:以最后保存的一份为准,删掉的设置不会被
     const trimmed = { plugins: { Settings: { starredPlugins: ["A"] } } };
     // GM 是新存的(删了两项和 mergeProbe),站点存储是旧的、内容更多:以 GM 为准,删掉的不回来
     assert.deepEqual(merge({ gm: { ...trimmed, $savedAt: 2000 }, ls: { ...full, $savedAt: 1000 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
-    // 反过来站点存储较新:以站点存储为准
-    assert.deepEqual(merge({ gm: { ...full, $savedAt: 1000 }, ls: { ...trimmed, $savedAt: 2000 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
+    // 反过来站点存储较新:GM 是唯一权威,仍以 GM 为准(站点存储只是 GM 为空时救回用的备份)
+    assert.deepEqual(merge({ gm: { ...full, $savedAt: 1000 }, ls: { ...trimmed, $savedAt: 2000 } }), { starred: ["A", "B", "C"], extra: "old", savedAtLeaked: false });
+    // 版本号更大的站点副本也不盖过 GM
+    assert.deepEqual(merge({ gm: { ...full, $rev: 3 }, ls: { ...trimmed, $rev: 9 } }), { starred: ["A", "B", "C"], extra: "old", savedAtLeaked: false });
+    // GM 为空:从站点副本救回
+    assert.deepEqual(merge({ ls: { ...trimmed, $rev: 9 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
     // 旧版本存的副本没有时间戳:有时间戳的优先
     assert.deepEqual(merge({ gm: trimmed, ls: { ...full, $savedAt: 1 } }), { starred: ["A", "B", "C"], extra: "old", savedAtLeaked: false });
     assert.deepEqual(merge({ gm: full, ls: { ...trimmed, $savedAt: 1 } }), { starred: ["A"], extra: null, savedAtLeaked: false });
@@ -1000,6 +1004,30 @@ test("保存:内容没变时不重写 GM 存储", () => {
     const { data, errors } = runSite(bundle, "https://example.com/page", "example", { PROFILE: "adguard", SAVE_PROBE: "1" });
     assert.equal(errors, "none");
     assert.deepEqual(data.saveProbe, { firstWrites: 1, sameWrites: 0, changedWrites: 1, staleWrites: 1, stored: ["a", "b"] });
+});
+
+const runTabs = (scenario, env = {}) => {
+    const text = execFileSync(process.execPath, [join(root, "test/smoke/tabs.cjs"), bundle, scenario], { encoding: "utf8", env: { ...process.env, ...env } });
+    const errors = text.slice(text.indexOf("ERRORS:") + 7, text.indexOf("LOGS:")).trim();
+    return { data: JSON.parse(text.slice(text.indexOf("{"), text.indexOf("ERRORS:"))), errors };
+};
+
+test("多标签页同时保存:不丢改动,同一项冲突时所有标签页收敛到同一个值(有 / 没有值变化监听)", () => {
+    for (const env of [{}, { PROFILE: "adguard" }]) {
+        const c = runTabs("concurrent", env);
+        assert.equal(c.errors, "none");
+        const both = { probeA: "a", probeB: "b" };
+        assert.deepEqual({ stored: c.data.stored, A: c.data.A, B: c.data.B }, { stored: both, A: both, B: both }, JSON.stringify(env));
+    }
+    const k = runTabs("conflict");
+    assert.equal(k.errors, "none");
+    assert.equal(k.data.converged, true, JSON.stringify(k.data.values));
+});
+
+test("别的标签页删掉整条插件设置:本页已注册的插件重置为默认值,不删条目", () => {
+    const { data, errors } = runTabs("registered");
+    assert.equal(errors, "none");
+    assert.deepEqual(data.registered, { before: "dark", entry: true, read: "auto", stored: null });
 });
 
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {

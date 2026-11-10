@@ -358,6 +358,10 @@ const req = id => root.r(id);
     dp.mode = "auto";
     await sleep(300);
     const storedDp2 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
+    // 重置(删掉这一项):回到"没设置过",不存,以后跟着默认值变
+    delete dp.mode;
+    await sleep(300);
+    const storedDp3 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
     const fromOther = JSON.parse(JSON.stringify(raw()));
     fromOther.$rev = raw().$rev + 1;
     delete fromOther.plugins.DefaultProbe.list;
@@ -365,7 +369,7 @@ const req = id => root.r(id);
     P.SettingsStore.addPrefixChangeListener("plugins.DefaultProbe.", (v, path) => dpSeen.push(`${path}=${JSON.stringify(v)}`));
     store.set("UserscriptPPSettings", fromOther);
     valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, fromOther, true));
-    out.defaults = { first: storedDp1, second: storedDp2, readMode: dp.mode, definitionUntouched: listDefault.length === 1, remoteList: P.PlainSettings.plugins.DefaultProbe.list, notified: dpSeen };
+    out.defaults = { first: storedDp1, second: storedDp2, reset: storedDp3, readMode: dp.mode, definitionUntouched: listDefault.length === 1, remoteList: P.PlainSettings.plugins.DefaultProbe.list, notified: dpSeen };
     // 备份:敏感设置默认不导出,导入时文件里为空则保留本机的
     P.registerPlugin(P.definePlugin({ name: "SecretProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ token: { type: P.OptionType.STRING, default: "", sensitive: true }, color: { type: P.OptionType.STRING, default: "" } }) }));
     P.Settings.plugins.SecretProbe.token = "s3cret"; P.Settings.plugins.SecretProbe.color = "red";

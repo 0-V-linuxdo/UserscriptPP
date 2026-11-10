@@ -4,7 +4,7 @@ import { isChromium } from "../env.js";
 import { fetchExternalFor } from "./net.js";
 import { Logger } from "./logger.js";
 import { diag, trace } from "./diag.js";
-import { Settings, PlainSettings, SettingsStore, setDefaultResolver } from "./settings.js";
+import { Settings, PlainSettings, SettingsStore, setDefaultResolver, setPluginRegistry } from "./settings.js";
 import { addPatch } from "./turbopack.js";
 import { enableStyle, disableStyle } from "./styles.js";
 import { subscribe as subscribeEvent, dispatch, Events } from "./events.js";
@@ -92,6 +92,7 @@ export function getSettingDefault(setting) {
     return setting.default;
 }
 
+setPluginRegistry(name => !!plugins[name]);
 setDefaultResolver((pluginName, key) => {
     if (key === "enabled") return undefined;
     const s = plugins[pluginName]?.settings?.def?.[key];
@@ -600,13 +601,15 @@ export function cleanStaleSettings(now = Date.now()) {
     const seen = sys.pluginsLastSeen;
     const plain = PlainSettings.plugins.Settings.pluginsLastSeen;
     const present = name => !!plugins[name] || otherSites.has(name);
-    // 在场的插件:最后见到的时间按天更新,避免每次启动都写设置
-    for (const name of Object.keys(plugins)) if (!(now - (plain[name] || 0) < DAY_MS)) seen[name] = now;
+    // 在场的插件:最后见到的时间按天更新,避免每次启动都写设置;记的是当天零点(UTC),
+    // 恢复会话时几个标签页同时启动,写出的内容相同,不会互相冲突
+    const today = now - (now % DAY_MS);
+    for (const name of Object.keys(plugins)) if (!(now - (plain[name] || 0) < DAY_MS)) seen[name] = today;
     const keep = new Set([...Object.keys(plugins), ...otherSites]);
     for (const name of Object.keys(PlainSettings.plugins)) {
         if (present(name)) continue;
         const at = plain[name];
-        if (!at) { seen[name] = now; keep.add(name); continue; }
+        if (!at) { seen[name] = today; keep.add(name); continue; }
         if (now - at < STALE_MS) { keep.add(name); continue; }
         delete Settings.plugins[name];
         delete seen[name];
@@ -623,7 +626,8 @@ export function recordKnownPlugins() {
     if (!PlainSettings.plugins.Settings.knownPlugins || typeof PlainSettings.plugins.Settings.knownPlugins !== "object") s.knownPlugins = {};
     const known = s.knownPlugins;
     const now = Date.now();
-    for (const name of Object.keys(plugins)) if (known[name] == null) known[name] = now;
+    const today = now - (now % DAY_MS);
+    for (const name of Object.keys(plugins)) if (known[name] == null) known[name] = today;
 }
 
 /** 检查依赖是否都在(依赖只能指向同站点或通用插件);依赖的启用由 dependencyClosure 推导,不写进设置 */
