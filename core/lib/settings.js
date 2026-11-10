@@ -645,12 +645,12 @@ let siteTimer = 0, siteJson = null;
 /** localStorage 是同步写入,大块设置会卡主线程;只在管理器没有值变化监听、要靠它的 storage 事件做多标签页同步时才写 */
 const needLsSync = () => !GM.addListener;
 
-/** 读 GM 存储里现在那份设置;读不到为 null。同步接口直接返回,异步接口(AdGuard、GM4)等它 */
-async function readStoredGm() {
+/** 读 GM 存储里现在那份设置;读不到为 null。同步接口直接返回(离开页面时补存不多等一个微任务),异步接口(GM4 等)返回 Promise */
+function readStoredGm() {
     if (!GM.get) return null;
     try {
-        let raw = GM.get(STORAGE_KEY);
-        if (raw && typeof raw.then === "function") raw = await raw;
+        const raw = GM.get(STORAGE_KEY);
+        if (raw && typeof raw.then === "function") return raw.then(parseStored, () => null);
         return parseStored(raw);
     } catch { return null; }
 }
@@ -661,7 +661,8 @@ function armVerify() {
     verifyTimer = setTimeout(async () => {
         verifyTimer = 0;
         if (!inflight) return;
-        const stored = await readStoredGm();
+        let stored = readStoredGm();
+        if (stored && typeof stored.then === "function") stored = await stored;
         if (!inflight) return;
         const v = verOf(stored);
         if (!stored || (v.writer === TAB_WRITER && v.rev === inflight.ver.rev)) { inflight = null; reasserts = 0; return; }
@@ -679,7 +680,8 @@ export async function saveNow({ flushBackup = false } = {}) {
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
     let stored = null, haveStored = false;
     if (GM.get) {
-        stored = await readStoredGm();
+        stored = readStoredGm();
+        if (stored && typeof stored.then === "function") stored = await stored;
         haveStored = true;
         if (stored && cmpVer(verOf(stored), known) > 0) applyRemote(stored);
     }
