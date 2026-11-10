@@ -14,14 +14,16 @@
 //
 // 站点目录:index.js(U => U.defineSite(...))、plugins/<插件>/index.js、userscript.json(发布信息,见 README)。
 import { build } from "esbuild";
-import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync, readFileSync, watch, mkdtempSync } from "node:fs";
+import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync, readFileSync, watch, mkdtempSync, realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename, sep, relative, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// 目录一律取真实路径:esbuild 报告的来源是解析过符号链接的(macOS 的临时目录 /var 实际是 /private/var),
+// 不统一的话按目录判断文件归属(sourcemap 来源名、站点插件、热重载)都会对不上
+const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 let hotShim = null; // 热重载代码块用的 JSX 垫片(临时文件)
 /** 框架自己的版本(package.json),和站点脚本的版本分开;写进脚本供诊断和 U.frameworkVersion 使用 */
 const FRAMEWORK_VERSION = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -30,7 +32,7 @@ const argValues = name => args.flatMap((a, i) => (a === name ? [args[i + 1]] : [
 // 缺省输出到当前目录的 dist/:框架作为依赖装在 node_modules 里时,产物也落在站点仓库自己的目录
 const outDir = resolve(argValues("--out")[0] ?? "dist");
 const siteIds = [...argValues("--site"), ...argValues("--sites")].flatMap(v => String(v || "").split(",")).map(x => x.trim()).filter(Boolean);
-const siteDirs = argValues("--site-dir").map(p => resolve(p));
+const siteDirs = argValues("--site-dir").map(p => existsSync(p) ? realpathSync(resolve(p)) : resolve(p));
 const CHECK_ONLY = !siteIds.length && !siteDirs.length;
 const channel = argValues("--channel")[0] || null;
 const HOT = args.includes("--hot");
@@ -538,7 +540,7 @@ async function pushHot(hot, files, dirs) {
  *  插件只能引入自己目录里的文件和 node_modules;引入了核心文件时不能单独替换(核心模块在页面上已有一份)。 */
 async function bundlePluginChunk(entry, id) {
     if (!hotShim) {
-        hotShim = join(mkdtempSync(join(tmpdir(), "uspp-hot-")), "jsx-shim.js");
+        hotShim = join(realpathSync(mkdtempSync(join(tmpdir(), "uspp-hot-"))), "jsx-shim.js");
         writeFileSync(hotShim, "export const __USPP_JSX_H__ = (...a) => U.react.h(...a);\nexport const __USPP_JSX_FRAGMENT__ = U.react.Fragment;\n");
     }
     const res = await build({
