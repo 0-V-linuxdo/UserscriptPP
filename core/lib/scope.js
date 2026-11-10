@@ -23,6 +23,23 @@ export function runAs(name, fn) {
     try { return fn(); } finally { current = prev; }
 }
 
+/**
+ * 回调登记时记下主人,执行时以主人的身份运行(和 TC39 AsyncContext.Snapshot.wrap、Zone.js 一样):
+ * 回调里再调用的 U.* 归登记它的插件,而不是恰好触发它的插件(例如别的插件在 start() 里加了注入点内容,同步通知到这里)。
+ * 主人已停止时不再调用,返回 fallback(...参数) 的结果(缺省 undefined)。登记时没有主人的,执行时也不归任何插件
+ */
+export function adopt(fn, fallback) {
+    if (typeof fn !== "function") return fn;
+    const owner = current;
+    const scope = owner ? scopes.get(owner) : null;
+    return function (...a) {
+        if (scope && !scope.live()) return fallback ? fallback.apply(this, a) : undefined;
+        const prev = current;
+        current = owner;
+        try { return fn.apply(this, a); } finally { current = prev; }
+    };
+}
+
 function createScope(name) {
     // Set 保持插入顺序;提前撤销或定时器到点后,条目连同闭包从这里删掉,长开的标签页不会越积越多
     const list = new Set();
@@ -44,10 +61,12 @@ function createScope(name) {
         register(once);
         return once;
     };
-    const g = (where, fn) => guard(name, where, fn, false, live);
-    const t = (where, fn) => guard(name, where, fn, true, live);
+    // 回调以本插件的身份运行(见 adopt):里面再调用的 U.* 也归本插件
+    const as = fn => typeof fn === "function" ? function (...a) { const prev = current; current = name; try { return fn.apply(this, a); } finally { current = prev; } } : fn;
+    const g = (where, fn) => guard(name, where, as(fn), false, live);
+    const t = (where, fn) => guard(name, where, as(fn), true, live);
     // 方法补丁的 instead:插件停了就直接调用原方法(不能返回 undefined 顶替原方法的结果)
-    const insteadOf = fn => typeof fn === "function" ? guard(name, "patch:instead", (args, next, self) => live() ? fn(args, next, self) : next(...args), true) : fn;
+    const insteadOf = fn => typeof fn === "function" ? guard(name, "patch:instead", as((args, next, self) => live() ? fn(args, next, self) : next(...args)), true) : fn;
     const wrapHooks = (kind, hooks) => hooks && typeof hooks === "object"
         ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`${kind}:${k}`, v)])) : hooks;
     // 注入点内容的点击处理(onClick / onSelect)出错也归到插件

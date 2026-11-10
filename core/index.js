@@ -43,7 +43,7 @@ import { openSettingsPanel, closeSettingsPanel } from "./settings/SettingsPanel.
 import { PluginModal } from "./settings/PluginModal.js";
 import { checkPatches, describeResult, crawlChunks, extractChunkPaths } from "./lib/reporter.js";
 import { trackFinders, failedFinders } from "./lib/finder-log.js";
-import { ownByCurrent } from "./lib/scope.js";
+import { ownByCurrent, adopt } from "./lib/scope.js";
 import { installBridge, setPluginResolver, setSelfTarget, setPluginDeadCheck } from "./lib/bridge.js";
 import { patchMethod, isPatched } from "./lib/patcher.js";
 import { rewriteRequest, rewriteResponse, onWebSocket, onEventSource, makeResponse } from "./lib/network.js";
@@ -64,6 +64,9 @@ import { startHotClient, evalPluginChunk } from "./lib/hot.js";
 import { installWebpack } from "./lib/webpack.js";
 import { checkForUpdate, installUpdate, CHANGELOG } from "./lib/updater.js";
 import { openChangelog } from "./settings/UpdatesTab.js";
+
+// U.* 登记的回调以登记时的插件身份运行;方法补丁的 instead 在主人停了时调用原方法
+const adoptHooks = hooks => hooks && typeof hooks === "object" ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, k === "instead" ? adopt(v, (args, next) => next(...args)) : adopt(v)])) : hooks;
 
 const logger = new Logger("Core", "#c4b5fd");
 const DEFAULT_READY_TIMEOUT = 15000;
@@ -451,25 +454,25 @@ function main() {
         // 被其他脚本包装执行的模块只在运行时缓存里:并入本系统的缓存;版本号在缓存变化时递增
         syncModuleCache: () => { try { T.syncRuntimeCache(); } catch { /* 无打包器 */ } }, moduleCacheVersion: T.getCacheVersion,
         // DOM / fiber / JSX
-        waitForElement: dom.waitForElement, observe: (sel, opts) => ownByCurrent(dom.observe(sel, opts)),
+        waitForElement: dom.waitForElement, observe: (sel, opts) => ownByCurrent(dom.observe(sel, opts && typeof opts === "object" ? { ...opts, added: adopt(opts.added), removed: adopt(opts.removed) } : opts)),
         setAttr: dom.setAttr, setText: dom.setText, toggleClass: dom.toggleClass, setStyle: dom.setStyle, mount: dom.mount, unmount: dom.unmount,
         getFiber, getProps, walkFiberUp, findFiberProps,
-        addRenderHook: (type, fn) => ownByCurrent(addRenderHook(type, fn)), asArray, treeHas,
+        addRenderHook: (type, fn) => ownByCurrent(addRenderHook(type, adopt(fn))), asArray, treeHas,
         // 方法补丁器
-        patchMethod: (obj, name, hooks) => ownByCurrent(patchMethod(obj, name, hooks)), isPatched,
+        patchMethod: (obj, name, hooks) => ownByCurrent(patchMethod(obj, name, adoptHooks(hooks))), isPatched,
         // 路由 / 网络
-        onRouteChange: fn => ownByCurrent(onRouteChange(fn)),
-        onRequest: (m, fn) => ownByCurrent(onRequest(m, fn)), onResponse: (m, fn) => ownByCurrent(onResponse(m, fn)),
-        rewriteRequest: (m, fn) => ownByCurrent(rewriteRequest(m, fn)), rewriteResponse: (m, fn) => ownByCurrent(rewriteResponse(m, fn)),
-        onWebSocket: (m, hooks) => ownByCurrent(onWebSocket(m, hooks)), onEventSource: (m, hooks) => ownByCurrent(onEventSource(m, hooks)),
+        onRouteChange: fn => ownByCurrent(onRouteChange(adopt(fn))),
+        onRequest: (m, fn) => ownByCurrent(onRequest(m, adopt(fn))), onResponse: (m, fn) => ownByCurrent(onResponse(m, adopt(fn))),
+        rewriteRequest: (m, fn) => ownByCurrent(rewriteRequest(m, adopt(fn))), rewriteResponse: (m, fn) => ownByCurrent(rewriteResponse(m, adopt(fn))),
+        onWebSocket: (m, hooks) => ownByCurrent(onWebSocket(m, adoptHooks(hooks))), onEventSource: (m, hooks) => ownByCurrent(onEventSource(m, adoptHooks(hooks))),
         makeResponse,
         // 插件数据
         DataStore: { for: dataStoreFor },
         // 注入点
-        addSlotItem, removeSlotItem, getSlotItems, onSlotChange: (slot, fn) => ownByCurrent(onSlotChange(slot, fn)), getSlotVersion,
+        addSlotItem, removeSlotItem, getSlotItems, onSlotChange: (slot, fn) => ownByCurrent(onSlotChange(slot, adopt(fn))), getSlotVersion,
         renderSlot, SlotOutlet, applyMenuPatches,
         // 拦截器
-        addInterceptor: (name, fn, opts) => ownByCurrent(addInterceptor(name, fn, opts)), runInterceptors, hasInterceptors,
+        addInterceptor: (name, fn, opts) => ownByCurrent(addInterceptor(name, adopt(fn), opts)), runInterceptors, hasInterceptors,
         // 命令、搜索栏、快捷键
         registerCommand: def => ownByCurrent(registerCommand(def)), runCommand, getCommands, keyFor, openPalette, closePalette,
         // 安全模式、诊断
@@ -500,7 +503,7 @@ function main() {
         isOnlineThemesEnabled: themes.isOnlineThemesEnabled, setOnlineThemesEnabled: themes.setOnlineThemesEnabled,
         getQuickCss: themes.getQuickCss, setQuickCss: themes.setQuickCss,
         // 事件
-        subscribe: (ev, fn) => ownByCurrent(subscribe(ev, fn)), dispatch, Events,
+        subscribe: (ev, fn) => ownByCurrent(subscribe(ev, adopt(fn))), dispatch, Events,
         // 工具
         Logger, ErrorBoundary: R.ErrorBoundary, makeLazy, proxyLazy, fetchExternal,
         copyToClipboard: utils.copyToClipboard, debounce: utils.debounce, sleep: utils.sleep, onlyOnce: utils.onlyOnce,

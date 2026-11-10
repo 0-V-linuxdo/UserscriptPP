@@ -1039,6 +1039,13 @@ test("熔断发生在派发中间:同一批里后面的回调不再调用被停�
     assert.deepEqual(data.trip, { marks: 0, started: false, phase: "tripped", errors: 10 });
 });
 
+test("回调以登记它的插件身份运行:别的插件触发的通知里创建的观察器归监听者,触发者停了它还在,监听者停了才撤", () => {
+    const { data, errors } = runTabs("owner");
+    assert.equal(errors, "none");
+    assert.ok(data.owner.afterTriggerStop > 0, JSON.stringify(data.owner));
+    assert.equal(data.owner.afterListenerStop, 0);
+});
+
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {
     const lines = readFileSync(join(root, "types/index.d.ts"), "utf8").split("\n");
     const targets = new Set(["UsppApi", "PluginCtx", "PluginDef", "SiteDef", "SettingCommon", "DefinedSettings", "PluginDataStore", "Patch", "PatchReplacement", "PatchHooks"]);

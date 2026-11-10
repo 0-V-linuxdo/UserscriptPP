@@ -15,6 +15,8 @@ const hasItems = slot => U.getSlotItems(slot).length > 0;
 // ---------- messageAccessory:DOM 容器 ----------
 const mounted = new Map(); // 回复元素 -> 句柄
 let offObserve = null;
+// 本次运行的作用域:观察器和渲染钩子经它登记,插件停止时一起撤掉;下面两个一次性标志随之复位
+let scope = null;
 function attach(el) {
     if (mounted.has(el)) return;
     const responseId = el.id.slice("response-".length);
@@ -26,7 +28,7 @@ function attach(el) {
 }
 function syncAccessory() {
     if (hasItems(MESSAGE_SLOTS.accessory)) {
-        offObserve ??= U.observe(RESPONSE_SELECTOR, { added: attach, removed: el => { mounted.get(el)?.unmount(); mounted.delete(el); } });
+        offObserve ??= scope?.observe(RESPONSE_SELECTOR, { added: attach, removed: el => { mounted.get(el)?.unmount(); mounted.delete(el); } }) ?? null;
     } else if (offObserve) {
         offObserve(); offObserve = null;
         for (const [el, x] of mounted) { x.unmount(); el.querySelector(":scope > [data-uspp-message-accessory]")?.remove(); }
@@ -52,8 +54,10 @@ let toolbarHooked = false;
 function hookToolbar() {
     if (toolbarHooked) return;
     toolbarHooked = true;
+    const own = scope;
     const install = More => whenCommon(["DropdownMenu"], Menu => {
-        U.addRenderHook(Menu, (props, key, render) => {
+        if (!own || own.disposed) return;
+        own.addRenderHook(Menu, (props, key, render) => {
             if (!hasItems(MESSAGE_SLOTS.toolbar)) return undefined;
             const [trigger] = U.asArray(props.children);
             if (trigger?.props?.render?.props?.icon !== More) return undefined;
@@ -88,6 +92,14 @@ export default () => U.definePlugin({
     required: true,
     hidden: true,
     start(ctx) {
+        scope = ctx;
+        ctx.register(() => {
+            if (scope === ctx) scope = null;
+            offObserve = null;
+            toolbarHooked = false;
+            for (const [el, x] of mounted) { x.unmount(); el.querySelector(":scope > [data-uspp-message-accessory]")?.remove(); }
+            mounted.clear();
+        });
         ctx.onSlotChange(MESSAGE_SLOTS.accessory, syncAccessory);
         syncAccessory();
         ctx.onSlotChange(MESSAGE_SLOTS.toolbar, () => { if (hasItems(MESSAGE_SLOTS.toolbar)) hookToolbar(); });

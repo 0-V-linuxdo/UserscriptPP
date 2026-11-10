@@ -119,6 +119,25 @@ const sysOf = t => t.P.PlainSettings.plugins.Settings;
         out.trip = { marks: d.querySelectorAll(".trip-mark").length, started: !!P.plugins.TripProbe.started, phase: P.pluginPhase("TripProbe"), errors: P.pluginErrorStats().find(x => x.name === "TripProbe")?.count ?? null };
         errors.length = 0; // 插件故意抛的错会记日志
     }
+    if (scenario === "owner") {
+        // 回调以登记它的插件身份运行:别的插件在 start() 里加注入点内容时,监听者在通知里创建的观察器归监听者,不归触发者
+        const P = a.P, d = a.w.document;
+        let seen = 0, off = null;
+        P.registerPlugin(P.definePlugin({ name: "Listener", description: "x", authors: ["t"], start(ctx) {
+            ctx.onSlotChange("probe.slot", () => { off ??= P.observe(".owner-probe", { added: () => { seen++; } }); });
+        } }));
+        P.registerPlugin(P.definePlugin({ name: "Trigger", description: "x", authors: ["t"], start(ctx) { ctx.addSlotItem("probe.slot", "t", { label: "t" }); } }));
+        P.startPlugin("Listener");
+        P.startPlugin("Trigger");
+        P.stopPlugin("Trigger");
+        const el = d.createElement("p"); el.className = "owner-probe"; d.body.append(el);
+        await sleep(100);
+        const afterTriggerStop = seen;
+        P.stopPlugin("Listener");
+        const el2 = d.createElement("p"); el2.className = "owner-probe"; d.body.append(el2);
+        await sleep(100);
+        out.owner = { afterTriggerStop, afterListenerStop: seen - afterTriggerStop };
+    }
     out.writes = backgroundWrites;
     console.log(JSON.stringify(out, null, 1));
     console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
