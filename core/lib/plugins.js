@@ -369,14 +369,11 @@ export function startPlugin(p, stack = []) {
         logger.error(`发现循环依赖:${[...stack, p.name].join(" -> ")}`);
         return false;
     }
+    // 依赖由 reconcile 先启动(按依赖顺序);这里只检查,不再顺带启动(那样会绕过安全模式、启动阶段和熔断)
     for (const dep of p.dependencies || []) {
         const d = plugins[dep];
         if (!d) { logger.warn(`${p.name} 依赖的插件 ${dep} 不存在`); return false; }
-        if (!d.started) {
-            // 出错太多被停掉的依赖不在这里悄悄重启
-            if (d.tripped) { logger.warn(`${p.name} 依赖的插件 ${dep} 因出错太多已停用,本页不启动 ${p.name}`); return false; }
-            if (!startPlugin(d, [...stack, p.name])) return false;
-        }
+        if (!d.started) { logger.debug(`${p.name} 依赖的插件 ${dep} 没在运行,暂不启动`); return false; }
     }
 
     noteStarting(p.name);
@@ -392,8 +389,15 @@ export function startPlugin(p, stack = []) {
             if (!pluginHasPatches(p)) track(p.name, () => disableStyle(p.managedStyle));
         }
         const started = runAs(p.name, () => p.start?.(ctx));
-        // async start():await 之后的出错不算启动失败(插件已在运行),记为运行期错误
-        if (started && typeof started.then === "function") started.then(undefined, e => reportPluginError(p.name, "start (async)", e));
+        // async start():await 之后的出错不算启动失败(插件已在运行),记为运行期错误。完成前阶段为 starting;
+        // 期间被停掉(或停了又启动)的,旧一次的结果作废(和 React effect 的过期标记一样)
+        if (started && typeof started.then === "function") {
+            const pr = p.startPromise = Promise.resolve(started).then(() => { if (p.startPromise === pr) p.startPromise = null; }, e => {
+                if (p.startPromise !== pr) return;
+                p.startPromise = null;
+                reportPluginError(p.name, "start (async)", e);
+            });
+        }
         for (const c of p.commands || []) {
             if (!c) continue;
             track(p.name, registerCommand({ ...c, run: guard(p.name, `command:${c.id ?? c.name}`, c.run, true), id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
@@ -480,45 +484,77 @@ export function stopPlugin(p) {
         try { document.querySelectorAll(sel).forEach(el => el.remove()); } catch (e) { logger.error(`${p.name} 清理选择器 ${sel} 出错`, e); }
     }
     p.started = false;
+    p.startPromise = null;
     logger.debug(`已停止 ${p.name}`);
     return true;
 }
 
 // ---------- 收敛:让实际运行状态跟上期望 ----------
 /** 期望运行:已启用、安全模式允许、启动阶段已到、自己和依赖都没被熔断 */
-function shouldRun(p) {
+function shouldRun(p, seen = new Set()) {
     if (!isPluginEnabled(p.name)) return false;
     // 补丁没在本页生效的插件不启动(半启动的插件没有补丁,行为不完整);刷新后按新计划启动
     if (patchGated(p) && !patchesLive(p)) return false;
     if (isSafeMode() && !p.required) return false;
     if (!reachedStages.has(p.startAt ?? StartAt.Init)) return false;
     if (p.tripped) return false;
-    for (const d of allDependencies(p)) if (plugins[d]?.tripped) return false;
+    // 依赖也要能运行(安全模式、启动阶段、熔断、补丁计划都算):不会出现"依赖方在跑、依赖已停"
+    for (const d of p.dependencies || []) {
+        const q = plugins[d];
+        if (!q || seen.has(d)) return false;
+        if (!shouldRun(q, new Set([...seen, p.name]))) return false;
+    }
     return true;
+}
+const depsRunning = p => (p.dependencies || []).every(d => plugins[d]?.started);
+/** 本次要收敛的插件连同它们的依赖和依赖它们的(停一个依赖时依赖它的也要停,启动时依赖要先起来) */
+function withRelated(names) {
+    const out = new Set(names);
+    for (let grew = true; grew;) {
+        grew = false;
+        for (const n of [...out]) {
+            const p = plugins[n];
+            if (!p) continue;
+            for (const d of allDependencies(p)) if (!out.has(d)) { out.add(d); grew = true; }
+        }
+        for (const q of Object.values(plugins)) {
+            if (out.has(q.name)) continue;
+            for (const d of allDependencies(q)) if (out.has(d)) { out.add(q.name); grew = true; break; }
+        }
+    }
+    return out;
 }
 
 /** 插件当前所处状态,界面和诊断都从这里读 */
 export function pluginPhase(p) {
     if (typeof p === "string") p = plugins[p];
     if (!p) return "missing";
-    if (p.started) return "running";
+    if (p.started) return p.startPromise ? "starting" : "running";
     if (p.tripped) return "tripped";
     if (p.startError) return "failed";
     if (!isPluginEnabled(p.name)) return patchGated(p) && patchesLive(p) ? "reloadToDisable" : "idle";
     if (patchGated(p) && !patchesLive(p)) return "reloadToEnable";
     if (isSafeMode() && !p.required) return "safeMode";
     if (!reachedStages.has(p.startAt ?? StartAt.Init)) return "waiting";
-    if ([...allDependencies(p)].some(d => plugins[d]?.tripped)) return "blocked";
+    if ((p.dependencies || []).some(d => !plugins[d]?.started)) return "blocked";
     return "idle";
 }
 
 let reconciling = false, reconcileAgain = null;
+const settled = []; // 外层收敛排空后要做的事(嵌套调用时推迟的后续步骤、异步接口的兑现)
+/** 没在收敛中就立即执行 fn;收敛中(插件在 start/stop 里、熔断、站点就绪在收敛里同步触发)等外层排空后执行 */
+export function afterReconcile(fn) {
+    if (reconciling) settled.push(fn);
+    else fn();
+}
 /**
- * 按期望启停 names 里的插件(缺省为全部):该停的先停(依赖它的先停),该启动的再启动(依赖先启动)。
- * 启动失败过的不自动重试(用户重新打开开关时重试)。返回这次启动失败的插件
+ * 按期望启停 names 里的插件(缺省为全部),连同它们的依赖和依赖它们的:先算计划,再执行。
+ * 该停的先停(依赖它的先停),该启动的再启动(依赖先启动);依赖没在运行的不启动(阶段为 blocked)。
+ * 和 Kubernetes 控制器的工作队列一样,收敛中途来的请求排进队列,本轮之后接着处理,不嵌套执行。
+ * 启动失败过的不自动重试(用户重新打开、点 Restart 或 retryPlugins 时重试)。返回这次启动失败的插件
  */
 export function reconcile(names) {
-    const set = new Set(names || Object.keys(plugins));
+    const set = names ? withRelated(names) : new Set(Object.keys(plugins));
     if (reconciling) { for (const n of set) (reconcileAgain ??= new Set()).add(n); return []; }
     reconciling = true;
     const failed = [];
@@ -531,15 +567,25 @@ export function reconcile(names) {
             // 依赖别人的先停:按依赖深度从深到浅
             toStop.sort((a, b) => allDependencies(b).size - allDependencies(a).size);
             for (const p of toStop) stopPlugin(p);
+            // 依赖先启动:按依赖深度从浅到深
+            list.sort((a, b) => allDependencies(a).size - allDependencies(b).size);
             for (const p of list) {
-                if (p.started || p.startError || !shouldRun(p)) continue;
+                if (p.started || p.startError || !shouldRun(p) || !depsRunning(p)) continue;
                 if (!startPlugin(p)) failed.push(p);
             }
             todo = reconcileAgain;
         }
     } finally { reconciling = false; reconcileAgain = null; }
     refreshReload();
+    while (settled.length && !reconciling) { try { settled.shift()(); } catch (e) { logger.error("收敛后续步骤出错", e); } }
     return failed;
+}
+
+/** 清掉这些插件的启动失败记录后重新收敛(站点就绪后模块陆续到达时重试用);返回仍没启动的插件名 */
+export function retryPlugins(names) {
+    for (const n of names) if (plugins[n]?.startError) plugins[n].startError = null;
+    reconcile(names);
+    return names.filter(n => plugins[n] && isPluginEnabled(n) && !plugins[n].started);
 }
 
 /** 改了 name 的开关时受影响的插件:它自己、它的依赖、依赖它的 */
@@ -586,6 +632,24 @@ export function stopPluginApi(p) {
     setIntent(p, false);
     if (was && !isPluginEnabled(p.name)) dispatch(Events.PLUGIN_TOGGLE, { name: p.name, enabled: false });
     return !p.started;
+}
+
+/** 等外层收敛排空、异步 start() 完成后,给出插件的最终阶段 */
+const settle = name => new Promise(resolve => afterReconcile(() => {
+    const pr = plugins[name]?.startPromise;
+    (pr || Promise.resolve()).then(() => resolve(pluginPhase(name)));
+}));
+/** startPlugin 的异步版:在插件的 start/stop 里调用也会等真正启动(或确定启动不了)后兑现,兑现值是最终阶段 */
+export function startPluginAsync(p) {
+    const name = typeof p === "string" ? p : p?.name;
+    startPluginApi(name);
+    return settle(name);
+}
+/** stopPlugin 的异步版:兑现值是最终阶段 */
+export function stopPluginAsync(p) {
+    const name = typeof p === "string" ? p : p?.name;
+    stopPluginApi(name);
+    return settle(name);
 }
 
 /**
@@ -647,7 +711,9 @@ export function replacePlugin(def) {
     if (def.settings) def.settings.pluginName = def.name;
     bindMethods(def);
     plugins[def.name] = def;
-    const started = wasStarted ? startPlugin(def) : false;
+    // 换上新定义后经收敛启动(安全模式、阶段、依赖照常检查)
+    if (wasStarted) reconcile([def.name]);
+    const started = !!def.started;
     dispatch(Events.PLUGIN_TOGGLE, { name: def.name, enabled: isPluginEnabled(def.name), replaced: true });
     return { ok: !wasStarted || started, started, error: def.startError ?? null };
 }
@@ -656,7 +722,9 @@ export function registerPlugin(def) {
     if (!addPlugin(def, { runtime: true })) return false;
     // 首次见到也计入 knownPlugins
     const known = Settings.plugins.Settings?.knownPlugins;
-    if (known && known[def.name] == null) known[def.name] = Date.now();
+    if (known && known[def.name] == null) { const now = Date.now(); known[def.name] = now - (now % DAY_MS); }
+    // 启动阶段已经到了的,按开关立即启动(之前要等下一次整体收敛,开关显示开、实际没运行)
+    reconcile([def.name]);
     return true;
 }
 

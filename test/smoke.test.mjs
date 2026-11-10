@@ -1046,6 +1046,17 @@ test("回调以登记它的插件身份运行:别的插件触发的通知里创�
     assert.equal(data.owner.afterListenerStop, 0);
 });
 
+test("只经收敛启停:依赖失败时依赖方为 blocked 且不反复重试,Restart 连同依赖重试;start 里启动别的插件用异步接口;async start 有 starting 阶段;运行时注册的默认开启插件立即启动", () => {
+    const { data, errors } = runTabs("lifecycle");
+    assert.equal(errors, "none");
+    assert.deepEqual(data.lifecycle, {
+        blocked: { phase: "blocked", depPhase: "failed", tries: 1, triesAfterOtherReconcile: 1, restarted: true },
+        nested: { sync: false, final: "running" },
+        slow: { early: "starting", final: "running" },
+        autoOn: "running",
+    });
+});
+
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {
     const lines = readFileSync(join(root, "types/index.d.ts"), "utf8").split("\n");
     const targets = new Set(["UsppApi", "PluginCtx", "PluginDef", "SiteDef", "SettingCommon", "DefinedSettings", "PluginDataStore", "Patch", "PatchReplacement", "PatchHooks"]);

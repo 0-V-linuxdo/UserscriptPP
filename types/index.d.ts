@@ -10,6 +10,8 @@ export type Find = Pattern | Pattern[];
 export type FilterFn = (value: any) => boolean;
 export type Node = any;
 export type Component<P = any> = (props: P) => Node;
+/** 插件阶段(U.pluginPhase):running 运行中、starting async start() 还没完成、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖没在运行、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
+export type PluginPhase = "running" | "starting" | "idle" | "waiting" | "safeMode" | "failed" | "tripped" | "blocked" | "reloadToEnable" | "reloadToDisable" | "missing";
 
 // ---------- 补丁 ----------
 export type ReplaceFn = (match: string, ...groups: any[]) => string;
@@ -423,6 +425,10 @@ export interface UsppApi {
     startPlugin(name: string | Plugin): boolean;
     /** 把用户开关记为关闭并停下;必需插件、仍被别的启用插件依赖的插件不停,返回 false */
     stopPlugin(name: string | Plugin): boolean;
+    /** startPlugin 的异步版:在插件的 start/stop 里调用也会等真正启动(或确定启动不了)、async start() 完成后兑现,兑现值是最终阶段 */
+    startPluginAsync(name: string | Plugin): Promise<PluginPhase>;
+    /** stopPlugin 的异步版:兑现值是最终阶段 */
+    stopPluginAsync(name: string | Plugin): Promise<PluginPhase>;
     /** 用户开关是否打开(必需插件和被依赖的插件总是 true) */
     isPluginEnabled(name: string): boolean;
     /** 把用户开关取反并随之启停;必需插件和被依赖的插件不变 */
@@ -431,8 +437,8 @@ export interface UsppApi {
     setPluginEnabled(name: string, on: boolean): boolean;
     /** 重新启动出错太多被停掉、启动失败或被依赖拖住的插件(连同它的依赖);不改用户开关。返回是否已在运行 */
     restartPlugin(name: string): boolean;
-    /** 插件当前状态:running 运行中、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖被停掉、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
-    pluginPhase(name: string | Plugin): "running" | "idle" | "waiting" | "safeMode" | "failed" | "tripped" | "blocked" | "reloadToEnable" | "reloadToDisable" | "missing";
+    /** 插件当前状态:running 运行中、starting async start() 还没完成、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖被停掉、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
+    pluginPhase(name: string | Plugin): PluginPhase;
     /** 改动要刷新页面才生效的插件(补丁计划、requiresRestart、restartNeeded 设置和页面加载时不同);变化时发 reloadNeeded 事件 */
     reloadNeeded(): string[];
     /** 定义插件(只做类型标注,原样返回) */

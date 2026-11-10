@@ -245,10 +245,11 @@ onPluginTripped((name, s) => notify({
 }));
 
 function retryFailed(list) {
-    let pending = list.slice();
+    // 按名字记(热替换后指向新定义),经收敛重试(安全模式、阶段、依赖照常检查)
+    let pending = list.map(p => p.name);
     const attempt = () => {
         T.rescanRuntimeCache();
-        pending = pending.filter(p => P.isPluginEnabled(p.name) && !p.started && !P.startPlugin(p));
+        pending = P.retryPlugins(pending);
     };
     const tick = utils.debounce(() => {
         attempt();
@@ -258,7 +259,7 @@ function retryFailed(list) {
     const last = setTimeout(() => {
         off(); tick.cancel?.();
         attempt();
-        if (pending.length) logger.warn(`以下插件启动失败:${pending.map(p => p.name).join(", ")}`);
+        if (pending.length) logger.warn(`以下插件启动失败:${pending.join(", ")}`);
         else logger.info("之前启动失败的插件已全部启动");
         step("启动失败汇总", showFailureSummary);
     }, DEFAULT_READY_TIMEOUT);
@@ -408,6 +409,8 @@ function main() {
         registerPlugin: P.registerPlugin,
         startPlugin: P.startPluginApi,
         stopPlugin: P.stopPluginApi,
+        startPluginAsync: P.startPluginAsync,
+        stopPluginAsync: P.stopPluginAsync,
         isPluginEnabled: P.isPluginEnabled,
         togglePlugin: P.togglePlugin,
         setPluginEnabled: P.setPluginEnabled,
@@ -667,10 +670,13 @@ function main() {
         if (s.driver) step("扫描模块缓存", T.rescanRuntimeCache);
         step("onceReady", () => resolveReady());
         dispatch(Events.SITE_READY, { site: s.id });
-        const failed = step("启动 SiteReady 插件", () => P.startAllAt(P.StartAt.SiteReady)) || [];
-        if (failed.length) retryFailed(failed);
-        else setTimeout(() => step("启动失败汇总", showFailureSummary), 0);
-        step("启动完成", () => markBootHealthy());
+        // 站点就绪可能在别的插件启动时同步触发(模块加载):等收敛排空再启动 SiteReady 插件,失败重试列表和"启动完成"才准
+        P.afterReconcile(() => {
+            const failed = step("启动 SiteReady 插件", () => P.startAllAt(P.StartAt.SiteReady)) || [];
+            if (failed.length) retryFailed(failed);
+            else setTimeout(() => step("启动失败汇总", showFailureSummary), 0);
+            step("启动完成", () => markBootHealthy());
+        });
         if (s.driver) {
             logger.info(`站点已就绪,已加载 ${T.moduleCache.size} 个模块`);
             // 共存时部分模块不经本系统的包装执行,定期并入运行时缓存

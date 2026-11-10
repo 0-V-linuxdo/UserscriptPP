@@ -138,6 +138,38 @@ const sysOf = t => t.P.PlainSettings.plugins.Settings;
         await sleep(100);
         out.owner = { afterTriggerStop, afterListenerStop: seen - afterTriggerStop };
     }
+    if (scenario === "lifecycle") {
+        const P = a.P;
+        // 依赖启动失败:依赖方阶段为 blocked,不随每次收敛反复重试;Restart 连同依赖一起重试
+        let fTries = 0, fail = true;
+        P.registerPlugin(P.definePlugin({ name: "DepF", description: "x", authors: ["t"], start() { fTries++; if (fail) throw new Error("dep fails"); } }));
+        P.registerPlugin(P.definePlugin({ name: "DepUser", description: "x", authors: ["t"], dependencies: ["DepF"], start() { } }));
+        P.startPlugin("DepUser");
+        const blocked = { phase: P.pluginPhase("DepUser"), depPhase: P.pluginPhase("DepF"), tries: fTries };
+        P.registerPlugin(P.definePlugin({ name: "Other", description: "x", authors: ["t"], start() { } }));
+        P.startPlugin("Other"); P.stopPlugin("Other");
+        blocked.triesAfterOtherReconcile = fTries;
+        fail = false;
+        blocked.restarted = P.restartPlugin("DepUser") && P.plugins.DepF.started && fTries === 2;
+        P.stopPlugin("DepUser");
+        // 插件在 start() 里启动别的插件:同步接口推迟(返回 false),异步接口等真正启动后兑现
+        let nested = null;
+        P.registerPlugin(P.definePlugin({ name: "Inner", description: "x", authors: ["t"], start() { } }));
+        P.registerPlugin(P.definePlugin({ name: "Outer", description: "x", authors: ["t"], start() { nested = { sync: P.startPlugin("Inner"), promise: P.startPluginAsync("Inner") }; } }));
+        P.startPlugin("Outer");
+        nested.final = await nested.promise;
+        delete nested.promise;
+        // async start():完成前是 starting;期间停了又开,旧一次的结果作废
+        P.registerPlugin(P.definePlugin({ name: "Slow", description: "x", authors: ["t"], async start() { await sleep(50); } }));
+        P.startPlugin("Slow");
+        const slow = { early: P.pluginPhase("Slow") };
+        P.stopPlugin("Slow"); P.startPlugin("Slow");
+        slow.final = await P.startPluginAsync("Slow");
+        // 运行时注册的默认开启插件:立即启动
+        P.registerPlugin(P.definePlugin({ name: "AutoOn", description: "x", authors: ["t"], enabledByDefault: true, start() { } }));
+        out.lifecycle = { blocked, nested, slow, autoOn: P.pluginPhase("AutoOn") };
+        errors.length = 0; // DepF 故意抛的错会记日志
+    }
     out.writes = backgroundWrites;
     console.log(JSON.stringify(out, null, 1));
     console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
