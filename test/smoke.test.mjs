@@ -379,7 +379,7 @@ test("渲染型注入点、菜单补丁、拦截器、命令和快捷键、搜�
     // 开关与实际运行:熔断后点开关是重新启动;依赖跟着推导、不写进设置;别处改开关本页跟着启停;依赖被熔断时依赖方也停;启动失败调用 stop
     assert.deepEqual(data.lifecycle, {
         tripped: { phase: "tripped", restarted: true, intent: true },
-        dep: { a: true, b: true, bStored: null, locked: true, aAfter: false, bAfter: false, bStops: 1, syncedOn: true, syncedOff: true, trippedDep: { a: false, b: false, phaseA: "blocked" } },
+        dep: { a: true, b: true, bStored: null, locked: true, aAfter: false, bAfter: false, bStops: 1, syncedOn: true, syncedOff: true, trippedDep: { a: false, b: false, phaseA: "blocked" }, restarted: true, confirmRace: { dialogShown: true, a: false, b: false, aOn: false, bOn: false } },
         half: { stops: 1, phase: "failed" },
     });
 });

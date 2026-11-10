@@ -503,6 +503,26 @@ const px = `uspp-${ID}-`;
         // 熔断先短路,停止在这一轮结束后统一做
         await new Promise(r => setTimeout(r, 0));
         dep.trippedDep = { a: runs("DepA"), b: runs("DepB"), phaseA: U.pluginPhase("DepA") ?? null };
+        // 重新启动被依赖拖住的插件:连同出错被停的依赖一起起来,不改开关
+        dep.restarted = U.restartPlugin("DepA") && runs("DepB") && U.PlainSettings.plugins.DepB.enabled === undefined;
+        U.stopPlugin("DepA");
+        // 界面:关掉别人还要用的插件,确认对话框开着时它被熔断;点"全部关闭"后它和依赖它的都是关,不会被重新启动
+        U.setPluginEnabled("DepB", true);
+        U.setPluginEnabled("DepA", true);
+        U.openSettingsPanel({ tab: "plugins" });
+        await sleep(80);
+        const ui = () => uiOf(doc, `${px}root`);
+        [...(ui()?.querySelectorAll(`[role="tab"]`) ?? [])].find(b => b.textContent === "All")?.click();
+        await sleep(30);
+        ui()?.querySelector(`[data-uspp-${ID}-plugin="DepB"] [role="switch"]`)?.click();
+        await sleep(30);
+        const dialogShown = /Turn off DepB\?/.test(ui()?.textContent ?? "");
+        for (let i = 0; i < 10; i++) bctx.reportError(new Error("dep boom"), "test");
+        await sleep(0);
+        [...(ui()?.querySelectorAll("button") ?? [])].find(b => b.textContent === "Turn off all")?.click();
+        await sleep(30);
+        dep.confirmRace = { dialogShown, a: runs("DepA"), b: runs("DepB"), aOn: U.isPluginEnabled("DepA"), bOn: U.isPluginEnabled("DepB") };
+        U.closeAllModals();
         U.stopPlugin("DepA");
         // 启动到一半失败:调用 stop 收尾
         let halfStops = 0;

@@ -3,7 +3,7 @@ import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorB
 import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
-    plugins, isPluginEnabled, togglePlugin, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf, noteRestartSetting,
+    plugins, isPluginEnabled, setPluginEnabled, restartPlugin, pluginPhase, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf, noteRestartSetting,
 } from "../lib/plugins.js";
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
@@ -13,6 +13,7 @@ import {
     PlugIcon, StarIcon, StarFillIcon, PinIcon, PinFillIcon, SlidersIcon, LockIcon, WarningIcon, ChromiumIcon, WrenchIcon, EyeIcon,
 } from "../ui/icons.js";
 import { PluginModal } from "./PluginModal.js";
+import { turnOffPlugin } from "./toggle.js";
 import { hasPreview } from "./PluginPreview.js";
 import { BaseCard } from "./BaseCard.js";
 import { classes } from "../lib/utils.js";
@@ -94,16 +95,13 @@ function PluginCard({ p, tracker }) {
     const pinned = listSetting("pinnedPlugins").includes(p.name);
     const failed = !p.started && !!p.startError;
     const byDependency = isEnabledAsDependency(p.name);
+    const phase = pluginPhase(p);
+    // 开关只表示用户意图;出错被停、启动失败、被依赖拖住的另有"Restart"按钮
+    const canRestart = phase === "tripped" || phase === "failed" || (phase === "blocked" && enabled);
     const onToggle = async () => {
-        // 关掉一个别的插件还要用的插件:先问是否一起关(否则它会作为依赖继续运行)
-        const needs = enabled && !byDependency && !p.tripped ? dependentsOf(p.name) : [];
-        if (needs.length) {
-            const ok = await confirmDialog({ title: `Turn off ${p.name}?`, body: `${needs.join(", ")} ${needs.length === 1 ? "needs" : "need"} it. Turn ${needs.length === 1 ? "it" : "them"} off too?`, confirmText: "Turn off all", danger: true });
-            if (!ok) return;
-            for (const n of needs) if (isPluginEnabled(n) && !isEnabledAsDependency(n)) { togglePlugin(n); tracker.onToggled(plugins[n]); }
-        }
-        if (isPluginEnabled(p.name) === enabled) togglePlugin(p.name);
-        tracker.onToggled(p);
+        // 开还是关按点击时的状态定,之后只发"设成某个值"
+        if (isPluginEnabled(p.name)) await turnOffPlugin(p.name, q => tracker.onToggled(q));
+        else { setPluginEnabled(p.name, true); tracker.onToggled(p); }
     };
     const hasSettings = getVisibleSettings(p).length > 0;
     const showPreview = hasPreview(p);
@@ -133,6 +131,8 @@ function PluginCard({ p, tracker }) {
             btn("star", starred ? StarFillIcon : StarIcon, starred ? "Unstar" : "Star", toggleStar, starred),
             !p.required && btn("pin", pinned ? PinFillIcon : PinIcon, pinned ? "Unpin" : "Pin", togglePin, pinned),
             hasSettings && h(Tooltip, { key: "cfg", content: "config" }, btn(null, SlidersIcon, "config", openConfig)),
+            canRestart && h(Tooltip, { key: "restart", content: phase === "blocked" ? "A plugin it needs was stopped; restart both" : phase === "failed" ? "Failed to start; try again" : "Turned off on this page after too many errors; start it again" },
+                h(Button, { size: "sm", "data-uspp-restart": p.name, onClick: () => restartPlugin(p.name) }, "Restart")),
             p.required
                 // 必需插件:开关保持正常的“已开启”外观,只是锁住不能关;提示挂在外层 span 上(disabled 按钮不触发悬停)
                 ? h(Tooltip, { key: "switch", content: `Required for ${SCRIPT_NAME} to work, can't be turned off` },
@@ -143,8 +143,7 @@ function PluginCard({ p, tracker }) {
                     ? h(Tooltip, { key: "switch", content: `Needed by ${dependentsOf(p.name).join(", ")}` },
                         h("span", { className: "uspp-switch-lock", "data-uspp-locked": "dependency" },
                             h(Switch, { checked: true, disabled: true, label: p.name })))
-                    // 出错太多被本页停掉的:开关显示为关,打开就是重新启动
-                    : h(Switch, { key: "switch", checked: enabled && !p.tripped, label: p.name, onChange: onToggle }),
+                    : h(Switch, { key: "switch", checked: enabled, label: p.name, onChange: onToggle }),
         ],
         footer: [
             h("span", { key: "a", className: "uspp-card-authors" }, (p.authors || []).join(", ") || "\u00A0"),

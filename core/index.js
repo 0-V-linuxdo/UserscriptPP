@@ -407,6 +407,8 @@ function main() {
         stopPlugin: P.stopPluginApi,
         isPluginEnabled: P.isPluginEnabled,
         togglePlugin: P.togglePlugin,
+        setPluginEnabled: P.setPluginEnabled,
+        restartPlugin: P.restartPlugin,
         pluginPhase: P.pluginPhase,
         reloadNeeded: () => [...P.pendingReload],
         definePlugin: P.definePlugin,

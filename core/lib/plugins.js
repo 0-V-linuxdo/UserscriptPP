@@ -588,8 +588,33 @@ export function stopPluginApi(p) {
     return !p.started;
 }
 
-/** 返回 true 表示需要刷新页面 */
-export function togglePlugin(name) {
+/**
+ * 把用户开关设成 on(幂等:重复调用结果相同,不会因为中间状态变化而反转,界面在确认对话框之后调用也安全)。
+ * 关掉一个被别的插件依赖的插件时,它仍作为依赖运行(要一起关,先关依赖它的)。返回 true 表示需要刷新页面
+ */
+export function setPluginEnabled(name, on) {
+    const p = plugins[name];
+    if (!p || p.required) return false;
+    on = !!on;
+    const was = isPluginEnabled(name);
+    setIntent(p, on);
+    if (was !== isPluginEnabled(name) || on) dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
+    return pendingReload.has(name);
+}
+
+/** 重新启动出错太多被停掉、启动失败或被依赖拖住的插件:清掉它和它依赖的失败记录再收敛,不改用户的开关 */
+export function restartPlugin(name) {
+    const p = plugins[name];
+    if (!p) return false;
+    for (const n of [name, ...allDependencies(p)]) if (plugins[n]) clearFailure(plugins[n]);
+    reconcile(affectedBy(name));
+    dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
+    return !!p.started;
+}
+
+/** 返回 true 表示需要刷新页面。给出 enabled 时等于 setPluginEnabled(name, enabled) */
+export function togglePlugin(name, enabled) {
+    if (typeof enabled === "boolean") return setPluginEnabled(name, enabled);
     const p = plugins[name];
     if (!p) return false;
     if (p.required || isEnabledAsDependency(name)) return false;

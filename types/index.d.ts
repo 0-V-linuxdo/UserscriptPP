@@ -426,7 +426,11 @@ export interface UsppApi {
     /** 用户开关是否打开(必需插件和被依赖的插件总是 true) */
     isPluginEnabled(name: string): boolean;
     /** 把用户开关取反并随之启停;必需插件和被依赖的插件不变 */
-    togglePlugin(name: string, enabled?: boolean): void;
+    togglePlugin(name: string, enabled?: boolean): boolean;
+    /** 把用户开关设成 on(幂等);返回 true 表示要刷新页面才生效。必需插件不变 */
+    setPluginEnabled(name: string, on: boolean): boolean;
+    /** 重新启动出错太多被停掉、启动失败或被依赖拖住的插件(连同它的依赖);不改用户开关。返回是否已在运行 */
+    restartPlugin(name: string): boolean;
     /** 插件当前状态:running 运行中、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖被停掉、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
     pluginPhase(name: string | Plugin): "running" | "idle" | "waiting" | "safeMode" | "failed" | "tripped" | "blocked" | "reloadToEnable" | "reloadToDisable" | "missing";
     /** 改动要刷新页面才生效的插件(补丁计划、requiresRestart、restartNeeded 设置和页面加载时不同);变化时发 reloadNeeded 事件 */
