@@ -142,6 +142,13 @@ export default () => U.definePlugin({
     authors: ["Userscript++"],
     required: true,
     hidden: true,
+    // 插件停了(熔断、启动失败)时补丁里的 $self 调用:不加自己的菜单项,站点原有的照常显示
+    selfFallback: {
+        renderUserItems: () => null,
+        conversationExtras: (_id, base) => base,
+        renderMessageItems: () => null,
+        messageMenuChildren: original => original,
+    },
     patches: [
         {
             // 头像菜单:Sign Out 之前

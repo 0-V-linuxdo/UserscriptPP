@@ -53,8 +53,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const avail = hist.find(n => /available/.test(n.title));
     if (avail?.onClick) avail.onClick();
     out.opened = opened.slice();
-    out.storedVersion = store.get("UserscriptPPSettings")?.plugins?.Settings?.lastVersion;
-    const storedSys = () => store.get("UserscriptPPSettings")?.plugins?.Settings ?? {};
+    // 设置按份存:Settings 插件的那一份在 UserscriptPPSettings:p:Settings
+    const storedSys = () => { const v = store.get("UserscriptPPSettings:p:Settings"); return (typeof v === "string" ? JSON.parse(v) : v) ?? {}; };
+    out.storedVersion = storedSys().lastVersion;
     out.checkedAt = typeof storedSys().lastUpdateCheck;
     out.failures = storedSys().updateCheckFailures ?? 0;
     // 同时发起两次检查(例如自动检查还没回来时点了"检查更新"):共用同一次请求和结果

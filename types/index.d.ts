@@ -11,6 +11,17 @@ export type FilterFn = (value: any) => boolean;
 export type Node = any;
 export type Component<P = any> = (props: P) => Node;
 /** 插件阶段(U.pluginPhase):running 运行中、starting async start() 还没完成、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖没在运行、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
+/** 阶段的原因(U.pluginStatus):blocked 时 depStopped 依赖被熔断 / 启动失败 / 停着(可 Restart)、depWaiting 依赖在等启动阶段、depReload 依赖要刷新页面、depSafeMode、depMissing、depCycle、depDisabled 依赖被调试开关禁用;failed 时 startThrew / startRejected;idle 时 off / debugDisabled;tripped 时 tooManyErrors;其余阶段 reason 等于阶段名 */
+export type PluginStatusReason = "depStopped" | "depWaiting" | "depReload" | "depSafeMode" | "depMissing" | "depCycle" | "depDisabled" | "startThrew" | "startRejected" | "off" | "debugDisabled" | "tooManyErrors" | "missing" | PluginPhase;
+/** 插件阶段加原因 */
+export interface PluginStatus {
+    /** 和 pluginPhase 相同 */
+    phase: PluginPhase;
+    /** 为什么在这个阶段 */
+    reason: PluginStatusReason;
+    /** 相关的插件名或错误信息;没有时为 null */
+    detail: string | null;
+}
 export type PluginPhase = "running" | "starting" | "idle" | "waiting" | "safeMode" | "failed" | "tripped" | "blocked" | "reloadToEnable" | "reloadToDisable" | "missing";
 
 // ---------- 补丁 ----------
@@ -245,6 +256,8 @@ export interface PluginDef {
     settings?: DefinedSettings<any>;
     /** 打包器补丁:模块加载时改写源码 */
     patches?: Patch[];
+    /** 插件停了(补丁还在)时 $self.<名字> 的降级:函数缺省原样返回第一个参数,值缺省为 undefined;这里可以按名字给别的函数或值 */
+    selfFallback?: Record<string, unknown>;
     /** 启用时注册、停用时撤掉的样式名(先用 registerStyle 登记) */
     managedStyle?: string;
     /** 停止时删掉这些选择器匹配的节点 */
@@ -425,13 +438,13 @@ export interface UsppApi {
     startPlugin(name: string | Plugin): boolean;
     /** 把用户开关记为关闭并停下;必需插件、仍被别的启用插件依赖的插件不停,返回 false */
     stopPlugin(name: string | Plugin): boolean;
-    /** startPlugin 的异步版:在插件的 start/stop 里调用也会等真正启动(或确定启动不了)、async start() 完成后兑现,兑现值是最终阶段 */
+    /** startPlugin 的异步版:在插件的 start/stop 里调用也会等真正启动(或确定启动不了)、async start() 完成后兑现,兑现值是最终阶段(async start() 被拒绝时为 failed;期间被停掉时也兑现) */
     startPluginAsync(name: string | Plugin): Promise<PluginPhase>;
     /** stopPlugin 的异步版:兑现值是最终阶段 */
     stopPluginAsync(name: string | Plugin): Promise<PluginPhase>;
     /** 用户开关是否打开(必需插件和被依赖的插件总是 true) */
     isPluginEnabled(name: string): boolean;
-    /** 把用户开关取反并随之启停;必需插件和被依赖的插件不变 */
+    /** 不给 enabled 时把用户开关设成和现在相反(熔断的插件是重新启动),给了等于 setPluginEnabled;必需插件和被依赖的插件不变。返回 true 表示要刷新页面才生效(含连带的依赖) */
     togglePlugin(name: string, enabled?: boolean): boolean;
     /** 把用户开关设成 on(幂等);返回 true 表示要刷新页面才生效。必需插件不变 */
     setPluginEnabled(name: string, on: boolean): boolean;
@@ -439,6 +452,8 @@ export interface UsppApi {
     restartPlugin(name: string): boolean;
     /** 插件当前状态:running 运行中、starting async start() 还没完成、idle 没启用、waiting 启动阶段未到、safeMode 安全模式下不运行、failed 启动失败、tripped 出错太多本页停掉、blocked 依赖被停掉、reloadToEnable 开了但补丁要刷新后才生效、reloadToDisable 关了但补丁本页仍在、missing 没有这个插件 */
     pluginPhase(name: string | Plugin): PluginPhase;
+    /** 插件阶段加原因(例如 blocked 是依赖被停还是依赖在等启动阶段);阶段变化时发 pluginPhase 事件 */
+    pluginStatus(name: string | Plugin): PluginStatus;
     /** 改动要刷新页面才生效的插件(补丁计划、requiresRestart、restartNeeded 设置和页面加载时不同);变化时发 reloadNeeded 事件 */
     reloadNeeded(): string[];
     /** 定义插件(只做类型标注,原样返回) */
@@ -520,7 +535,7 @@ export interface UsppApi {
     /** 构建时从站点目录的 CHANGELOG.md 读出的更新日志,新的在前 */
     readonly changelog: ChangelogEntry[];
     /** 开发构建:用新定义原地替换同名插件(热重载用) */
-    replacePlugin?(def: PluginDef): { ok: boolean; started?: boolean; reason?: "invalid" | "missing" | "patches"; error?: unknown };
+    replacePlugin?(def: PluginDef): { ok: boolean; started?: boolean; phase?: PluginPhase; reason?: "invalid" | "missing" | "patches"; error?: unknown };
     // 模块查找
     /** 模块过滤器,配合 find / waitFor 使用 */
     filters: { byProps(...keys: string[]): FilterFn; byCode(...p: Pattern[]): FilterFn; byDisplayName(name: string): FilterFn; byStoreName(name: string): FilterFn; componentByCode(...p: Pattern[]): FilterFn; byClassName(...classes: string[]): FilterFn };
@@ -795,7 +810,7 @@ export interface UsppApi {
     /** 派发事件 */
     dispatch(event: string, data?: any): void;
     /** 框架内置的事件名 */
-    Events: { PLUGIN_TOGGLE: "pluginToggle"; PLUGIN_PIN: "pluginPin"; PLUGIN_STAR: "pluginStar"; RELOAD_NEEDED: "reloadNeeded"; SETTINGS_SYNC: "settingsSync"; SITE_READY: "siteReady"; ROUTE_CHANGE: "routeChange" };
+    Events: { PLUGIN_TOGGLE: "pluginToggle"; PLUGIN_PHASE: "pluginPhase"; PLUGIN_PIN: "pluginPin"; PLUGIN_STAR: "pluginStar"; RELOAD_NEEDED: "reloadNeeded"; SETTINGS_SYNC: "settingsSync"; SITE_READY: "siteReady"; ROUTE_CHANGE: "routeChange" };
     // 工具
     /** 带脚本名前缀的日志类 */
     Logger: typeof Logger;

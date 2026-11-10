@@ -1,16 +1,35 @@
 // 安全模式:页面可能被某个插件弄坏时,只启动必需插件,不加载主题和 Quick CSS。
-// 自动进入:启动时在 GM 存储里记"正在启动",站点就绪 10 秒后清掉;两分钟内连续两次启动都没清掉,下一次进入。
+// 自动进入:启动时在本标签页的 sessionStorage 里记"正在启动",站点就绪 10 秒后清掉;同一个标签页两分钟内连续两次启动都没清掉,下一次进入。
+// 记录按标签页分开(和 Firefox / Chromium 按"一个实例"计数一样):同时打开几个标签页是几次互不相干的正常启动,不算连续失败。
+// sessionStorage 刷新后还在、关掉标签页就没了,正好是"这个标签页的上一次启动"。
 // 站点已就绪、本次也没有插件启动失败时,10 秒内关掉或刷新页面(pagehide)也算正常结束,不计入。
-// 手动进入:菜单命令"以安全模式重新加载",或网址里带 #uspp-safe。
-import { W, GM } from "../env.js";
+// 手动进入:菜单命令"以安全模式重新加载"(只对本标签页),或网址里带 #uspp-safe。
+import { W, GM, SCRIPT_ID } from "../env.js";
 import { Logger } from "./logger.js";
 
 const logger = new Logger("SafeMode", "#fca5a5");
-export const BOOT_KEY = "UserscriptPPBoot";
+/** 旧版本放在 GM 存储里、所有标签页共用的记录;新版本不再用,启动时删掉 */
+export const LEGACY_BOOT_KEY = "UserscriptPPBoot";
+/** 本标签页的启动记录(sessionStorage,带脚本 id:同一页面上的几条脚本各记各的) */
+export const BOOT_KEY = `UserscriptPPBoot:${SCRIPT_ID}`;
 const RAPID_MS = 2 * 60 * 1000;
 const mem = new Map();
-const read = () => { try { const v = GM.get ? GM.get(BOOT_KEY, null) : mem.get(BOOT_KEY); return v && typeof v === "object" ? v : {}; } catch { return {}; } };
-const write = v => { try { if (GM.set) GM.set(BOOT_KEY, v); else mem.set(BOOT_KEY, v); } catch { /* 忽略 */ } };
+let storageOk = true;
+const ss = () => { try { return W.sessionStorage || null; } catch { return null; } };
+const read = () => {
+    try {
+        const s = ss();
+        if (!s) { storageOk = false; return mem.get(BOOT_KEY) || {}; }
+        const v = JSON.parse(s.getItem(BOOT_KEY) || "null");
+        return v && typeof v === "object" ? v : {};
+    } catch { storageOk = false; return mem.get(BOOT_KEY) || {}; }
+};
+const write = v => {
+    mem.set(BOOT_KEY, v);
+    try { const s = ss(); if (s) s.setItem(BOOT_KEY, JSON.stringify(v)); else storageOk = false; } catch { storageOk = false; }
+};
+/** sessionStorage 不能用(隐私模式、站点禁用)时自动安全模式不起作用,诊断信息里注明 */
+export const bootTrackingAvailable = () => storageOk;
 
 let active = false, reason = null, previous = {};
 // 本次启动的记录留一份在内存里,写存储时不必先读一遍
@@ -26,6 +45,7 @@ const save = v => { state = v; write(v); };
 /** 入口最早调用:决定本次是否进入安全模式,并记下"正在启动" */
 export function beginBoot() {
     previous = read();
+    try { if (GM.del && GM.get && GM.get(LEGACY_BOOT_KEY, null) != null) GM.del(LEGACY_BOOT_KEY); } catch { /* 忽略 */ }
     const now = Date.now();
     const hash = (() => { try { return W.location.hash.includes("uspp-safe"); } catch { return false; } })();
     const rapid = previous.pending && now - (previous.at || 0) < RAPID_MS;

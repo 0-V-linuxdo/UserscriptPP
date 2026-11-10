@@ -5,15 +5,14 @@ import { confirmDialog } from "../ui/modal.js";
 
 const userDependents = name => dependentsOf(name).filter(n => !isEnabledAsDependency(n));
 
-/** 关掉 name(连同依赖它的插件,先问);onToggled 对每个被关掉的插件调用。取消时返回 false */
+/** 关掉 name(连同依赖它的插件,先问);onToggled(插件, 是否新增了要刷新的插件) 对每个被关掉的插件调用。取消时返回 false */
 export async function turnOffPlugin(name, onToggled = () => { }) {
     if (userDependents(name).length) {
         const needs = userDependents(name);
         const ok = await confirmDialog({ title: `Turn off ${name}?`, body: `${needs.join(", ")} ${needs.length === 1 ? "needs" : "need"} it. Turn ${needs.length === 1 ? "it" : "them"} off too?`, confirmText: "Turn off all", danger: true });
         if (!ok) return false;
-        for (const n of userDependents(name)) { setPluginEnabled(n, false); onToggled(plugins[n]); }
+        for (const n of userDependents(name)) onToggled(plugins[n], setPluginEnabled(n, false));
     }
-    setPluginEnabled(name, false);
-    onToggled(plugins[name]);
+    onToggled(plugins[name], setPluginEnabled(name, false));
     return true;
 }

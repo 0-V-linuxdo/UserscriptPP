@@ -3,10 +3,17 @@ import { h, useState } from "../ui/react.js";
 import { openModal, ModalCard } from "../ui/modal.js";
 import { Button } from "../ui/components.js";
 import { showNotice } from "../ui/toast.js";
-import { plugins, isPluginEnabled } from "../lib/plugins.js";
+import { plugins, isPluginEnabled, pendingReload } from "../lib/plugins.js";
+import { confirmDialog } from "../ui/modal.js";
 import { turnOffPlugin } from "./toggle.js";
 
 export const failedPlugins = () => Object.values(plugins).filter(p => isPluginEnabled(p.name) && !p.started && p.startError);
+
+/** 停用后要刷新才生效时问一次 */
+async function promptReload() {
+    if (!pendingReload.size) return;
+    if (await confirmDialog({ title: "Reload required", body: `${[...pendingReload].join(", ")} ${pendingReload.size === 1 ? "needs" : "need"} a page reload to apply.`, confirmText: "Reload", cancelText: "Later" })) location.reload();
+}
 
 const errText = e => (e?.stack || `${e?.name ?? "Error"}: ${e?.message ?? e}`);
 
@@ -19,7 +26,7 @@ function FailedList({ onClose }) {
                 h("div", { className: "uspp-row-text" },
                     h("div", { className: "uspp-row-title" }, p.name),
                     h("div", { className: "uspp-muted uspp-small" }, String(p.startError?.message ?? p.startError))),
-                !p.required && h(Button, { size: "sm", variant: "danger", onClick: async () => { await turnOffPlugin(p.name); force(x => x + 1); } }, "Disable")),
+                !p.required && h(Button, { size: "sm", variant: "danger", onClick: async () => { await turnOffPlugin(p.name, (_, need) => { if (need) promptReload(); }); force(x => x + 1); } }, "Disable")),
             h("pre", { className: "uspp-stack" }, errText(p.startError)))) : h("div", { className: "uspp-empty" }, "All plugins are running now."));
 }
 

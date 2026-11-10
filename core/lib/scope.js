@@ -22,6 +22,19 @@ export function runAs(name, fn) {
     current = name;
     try { return fn(); } finally { current = prev; }
 }
+/** 明确以"无主"身份执行(和 Solid 的 runWithOwner(null) 一样):交回原方法的 next()、清理函数里调用的东西不归任何插件 */
+export const runUnowned = fn => runAs(null, fn);
+
+/**
+ * 插件定义里声明的回调(events、commands、interceptors、zustand、onSettingsChange、注入点内容)统一用这个包:
+ * 以插件身份运行、插件停了或被熔断就不再调用、出错记到插件名下。和 ctx.* 里的包装是同一套
+ */
+export function bindTo(name, where, fn, rethrow = false) {
+    if (typeof fn !== "function") return fn;
+    const s = scopes.get(name);
+    const live = s ? s.live : () => false;
+    return guard(name, where, function (...a) { const prev = current; current = name; try { return fn.apply(this, a); } finally { current = prev; } }, rethrow, live);
+}
 
 /**
  * 回调登记时记下主人,执行时以主人的身份运行(和 TC39 AsyncContext.Snapshot.wrap、Zone.js 一样):
@@ -66,12 +79,27 @@ function createScope(name) {
     const g = (where, fn) => guard(name, where, as(fn), false, live);
     const t = (where, fn) => guard(name, where, as(fn), true, live);
     // 方法补丁的 instead:插件停了就直接调用原方法(不能返回 undefined 顶替原方法的结果)
-    const insteadOf = fn => typeof fn === "function" ? guard(name, "patch:instead", as((args, next, self) => live() ? fn(args, next, self) : next(...args)), true) : fn;
+    // next 交回原方法:以无主身份执行(原方法是站点的代码,它里面登记的东西、抛的错都不归本插件)
+    const unownedNext = next => (...x) => runUnowned(() => next(...x));
+    const insteadOf = fn => typeof fn === "function" ? guard(name, "patch:instead", as((args, next, self) => live() ? fn(args, unownedNext(next), self) : runUnowned(() => next(...args))), true) : fn;
     const wrapHooks = (kind, hooks) => hooks && typeof hooks === "object"
         ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`${kind}:${k}`, v)])) : hooks;
-    // 注入点内容的点击处理(onClick / onSelect)出错也归到插件
+    // 注入点内容的点击处理(onClick / onSelect)出错也归到插件;render / patch 以插件身份运行,插件停了不再调用
     const wrapItem = (slot, def) => def && typeof def === "object"
-        ? { ...def, ...Object.fromEntries(["onClick", "onSelect"].filter(k => typeof def[k] === "function").map(k => [k, g(`${slot}:${k}`, def[k])])) } : def;
+        ? { ...def, ...Object.fromEntries(["onClick", "onSelect"].filter(k => typeof def[k] === "function").map(k => [k, g(`${slot}:${k}`, def[k])])),
+            ...Object.fromEntries(["render", "patch"].filter(k => typeof def[k] === "function" && !(def[k].prototype && def[k].prototype.isReactComponent)).map(k => [k, as(def[k])])) } : def;
+    // 同一个 id 再加一次是替换:不多留一条清理项;旧的句柄只撤自己那一次,不撤后来替换上的
+    const slotGen = new Map();
+    const addOwnSlotItem = (slot, id, def) => {
+        const k = `${slot}\u0000${id}`;
+        const prev = slotGen.get(k);
+        if (prev) unregister(prev.once);
+        addSlotItem(slot, id, wrapItem(slot, def));
+        const rec = {};
+        rec.once = own(() => { if (slotGen.get(k) !== rec) return; slotGen.delete(k); removeSlotItem(slot, id); });
+        slotGen.set(k, rec);
+        return rec.once;
+    };
     const ctx = {
         plugin: name,
         get signal() { return ac?.signal; },
@@ -92,7 +120,7 @@ function createScope(name) {
         addRenderHook: (type, fn) => own(addRenderHook(type, t("renderHook", fn))),
         subscribe: (ev, fn) => own(subscribe(ev, g(`event:${ev}`, fn))),
         onSlotChange: (slot, fn) => own(onSlotChange(slot, g(`slot:${slot}`, fn))),
-        addSlotItem: (slot, id, def) => { addSlotItem(slot, id, wrapItem(slot, def)); return own(() => removeSlotItem(slot, id)); },
+        addSlotItem: addOwnSlotItem,
         patch: (obj, method, hooks) => own(patchMethod(obj, method, hooks && typeof hooks === "object"
             ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, k === "instead" ? insteadOf(v) : t(`patch:${method}`, v)])) : hooks)),
         listen: (target, type, fn, opts) => {
@@ -123,13 +151,16 @@ function createScope(name) {
         try { ac?.abort(); } catch { /* 忽略 */ }
         const fns = [...list].reverse();
         list.clear();
-        for (const fn of fns) {
-            try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); }
-        }
+        // 清理以无主身份执行:清理里调用的 U.* 不再登记到一个正在释放的作用域
+        runUnowned(() => {
+            for (const fn of fns) {
+                try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); }
+            }
+        });
     };
     // 熔断:先让本作用域的回调全部短路,真正的停止和清理稍后统一做
     const suspend = () => { suspended = true; };
-    return { ctx, dispose, register, unregister, suspend, live };
+    return { ctx, dispose, register, unregister, suspend, live, addSlotItem: addOwnSlotItem };
 }
 
 /** 插件启动时取一个新作用域(上一次的已在停止时释放) */
@@ -149,6 +180,8 @@ export function closeScope(name) {
 }
 
 export const getScope = name => scopes.get(name)?.ctx ?? null;
+/** 以插件作用域加注入点内容(同 ctx.addSlotItem:包装回调、同 id 替换、停止时撤掉);没有作用域时返回 null */
+export const addScopedSlotItem = (name, slot, id, def) => scopes.get(name)?.addSlotItem(slot, id, def) ?? null;
 /** 让插件的回调立即短路(熔断时用;之后照常停止插件) */
 export const suspendScope = name => scopes.get(name)?.suspend();
 /** 插件的作用域是否还活着 */

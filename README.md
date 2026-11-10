@@ -60,7 +60,7 @@
    | `grants` / `connect` / `require` / `resource` | `@grant` 由构建按产物自动推导(扫描用到的 `GM_xxx`,含插件的);`grants` 只用来追加扫描不到的,例如 `GM.getValue` 这类异步接口和 `window.close`。`@connect` 只写用到的主机:`updateBase` 的主机、`themeHosts`、`connect` 里列的(`--hot` 构建另加本机);都没有时不写,脚本不能跨域请求。`connect: ["*"]` 恢复成任意主机。运行时 `U.fetchExternal` / `ctx.fetchExternal` 按同一份列表再把一道关(各脚本管理器对 `@connect` 的执行尺度不一),拦下的请求列在诊断信息里;插件定义里写 `connect: ["api.example"]` 时,这些主机由构建自动收进 `@connect`,这个插件的 `ctx.fetchExternal` 也只能访问它们 |
    | `license` | 写进 `@license`,缺省 `GPL-3.0-or-later`;写了不兼容 GPL 的许可证时构建会提示(见"许可证") |
    | `themeHosts` | 在线主题允许从哪些主机取 CSS(写进 `@connect`);不在列表里的地址,Themes 页会说明原因。脚手架生成的配置里带了几个常见主机 |
-   | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉。`window[Symbol.for("uspp:<ID>")]` 上只有页面桥(补丁里 `$self` 用的门面),不是完整接口 |
+   | `global` | 开发构建的控制台调试名,缺省 `uspp_<ID>`;写 `null` 关掉。`window[Symbol.for("uspp:<ID>")]` 上只有页面桥(补丁里 `$self` 用的门面),不是完整接口。插件停了时门面上的函数原样交还第一个参数;第一个参数不是该交还的值时(例如 id、配置字符串),在插件定义里写 `selfFallback` 给出降级 |
    | `globalInProduction` | 为 `true` 时发布构建也挂调试名。调试名上是完整接口,网站自己的脚本也能拿到,发布版不建议打开 |
 
 3. **写站点定义** `sites/<id>/index.js`:
@@ -135,7 +135,7 @@
 - 脚本管理器菜单 "<脚本名> settings"(管理器没有菜单命令时是页面角落的悬浮按钮),或 `U.openSettings({ tab, plugin })`。站点声明了 `settingsHost` 时先用站点自己的设置界面,打不开时用框架面板。
 - Plugins 页只列这条脚本里当前站点和通用的插件。
 - 主题和 Quick CSS 按站点分区(`plugins.Settings.sites.<站点ID>`;空白站点上按主机名分区),只对当前站点生效。
-- 设置存在这条脚本的 GM 存储里(键 `UserscriptPPSettings`,脚本管理器按脚本隔开);在有适配的站点上另存一份到这个网站的 IndexedDB 作备份(键带脚本 ID;合并到 2 秒写一次,离开页面时补写;脚本管理器没有值变化监听时也写 localStorage,靠它的 storage 事件做多标签页同步)。内容和上次写入的一样时不重写。读取时三处合并,以最丰富的一份为主。多个标签页互相同步,收到同步时派发 `settingsSync`。本次构建里没有的插件(暂时拿掉、改名、或用户回退了版本),设置和插件数据先保留并记下最后见到的时间,超过 90 天没再出现才删除。
+- 设置存在这条脚本的 GM 存储里,按份分键(脚本管理器按脚本隔开):`UserscriptPPSettings:meta` 存顶层设置和插件名单,`UserscriptPPSettings:p:<插件名>` 存每个插件的设置,每份各带版本;旧版本的整份键 `UserscriptPPSettings` 只在第一次读到时迁移。多个标签页的写入在同一 origin 的 Web Locks 里串行,经 `BroadcastChannel` 广播;在有适配的站点上,这个网站的 `localStorage` 里有一份镜像(同 origin 的标签页之间同步用,也用来补回关页面时没落盘的写入,只"快进" GM),IndexedDB 里另存一份作备份(合并到 2 秒写一次,离开页面时补写)。所以管理器没有值变化监听(AdGuard)时多标签页也能同步。内容和上次写入的一样时不重写。GM 是唯一权威,站点副本只在 GM 为空时拿来救回。升级存储格式后请刷新所有打开的标签页。多个标签页互相同步,收到同步时派发 `settingsSync`。本次构建里没有的插件(暂时拿掉、改名、或用户回退了版本),设置和插件数据先保留并记下最后见到的时间,超过 90 天没再出现才删除。
 - Backup 页导出 / 导入整份设置;标 `sensitive: true` 的设置项默认不导出。导入前先列出会打开、会关掉的插件和会变的设置项数;导入时按各插件的设置定义逐项校验(类型、下拉选项、`isValid`),不合法的值改用缺省值并告诉用户,本次构建里没有的插件原样保留。导入前的设置(和要被覆盖的插件数据)存在 GM 存储里 7 天,导入完成的提示条上、Backup 页和搜索栏的 "Undo last import" 都能撤销,刷新页面后也可以。接口:`U.previewImport`、`U.importSettings`、`U.undoImport`、`U.lastImport`。
 
 ## 公开接口
@@ -174,7 +174,7 @@ Grok 示例里保留旧名(只在带它的构建里有):`common`、`addChatBarBu
 | 菜单注入点 `patch: true` + `applyMenuPatches` | 插件可以增、删、改原生菜单项(Grok 的 `conversationMenu`) |
 | 拦截器 `addInterceptor(名字, 处理)` / 插件字段 `interceptors` | 站点声明的拦截点(Grok:`beforeSend`,发送前改写或取消消息);处理返回新值或 `{ cancel: true }`,出错或超时跳过 |
 | 命令 `registerCommand` / 插件字段 `commands`、快捷键、搜索栏 | 命令可绑快捷键(设置的 Keybinds 页改绑、查冲突);`Alt+Shift+P` 打开搜索栏,搜命令、插件和设置项 |
-| 安全模式 | 连续两次启动没完成、网址带 `#uspp-safe` 或菜单 "reload in safe mode" 时只启动必需插件,不加载主题和 Quick CSS;页面上提示原因和最后在启动的插件 |
+| 安全模式 | 同一个标签页连续两次启动没完成(按标签页计数,存在 `sessionStorage`,同时打开几个标签页互不影响)、网址带 `#uspp-safe` 或菜单 "reload in safe mode" 时只启动必需插件,不加载主题和 Quick CSS;页面上提示原因和最后在启动的插件 |
 | 诊断、失败汇总、通知 | `collectDiagnostics()` / 命令 "Copy diagnostic info"(版本、脚本管理器、启用和失败的插件、补丁统计、最近日志;不含设置值);插件启动失败时汇总提示;`notify()` 卡片通知和 Notifications 页历史 |
 | `registerSettingsPage({ id, label, component })` / 插件字段 `settingsPages` | 给框架设置面板加一页 |
 

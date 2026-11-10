@@ -18,7 +18,18 @@ const store = new Map();
 const menus = [];
 w.GM_getValue = (k, d) => store.has(k) ? store.get(k) : d;
 let settingsWrites = 0;
-w.GM_setValue = (k, v) => { if (k === "UserscriptPPSettings") settingsWrites++; store.set(k, v); };
+// 设置按份存:UserscriptPPSettings:meta + UserscriptPPSettings:p:<插件名>;这里数 Settings 插件那一份的写入
+const SKM = "UserscriptPPSettings:meta", SKP = "UserscriptPPSettings:p:";
+w.GM_setValue = (k, v) => { if (k === SKP + "Settings") settingsWrites++; store.set(k, v); };
+const val = k => { const v = store.get(k); return typeof v === "string" ? JSON.parse(v) : v; };
+const strip = v => { if (!v) return v; const o = { ...v }; for (const k of ["$rev", "$writer", "$savedAt", "$parts", "$v", "$deleted"]) delete o[k]; return o; };
+const readDoc = () => {
+    const m = val(SKM);
+    if (!m) return null;
+    const doc = { ...strip(m), plugins: {} };
+    for (const n of m.$parts || []) { const pv = val(SKP + n); if (pv && !pv.$deleted) doc.plugins[n] = strip(pv); }
+    return doc;
+};
 w.GM_deleteValue = k => store.delete(k);
 w.GM_addValueChangeListener = () => 1;
 w.GM_registerMenuCommand = (name, fn) => { menus.push({ name, fn }); return menus.length; };
@@ -75,13 +86,13 @@ if (!process.env.MERGE_CASE) (async () => {
         const w2 = settingsWrites;
         S.starredPlugins = ["a", "b"]; await sleep(250);
         const w3 = settingsWrites;
-        // 管理器没有值变化监听(AdGuard):别的标签页悄悄把存储改成别的,本页再写一次和上次相同的内容,也要真的写进去
-        const other = JSON.parse(JSON.stringify(store.get("UserscriptPPSettings")));
-        other.plugins.Settings.starredPlugins = ["other-tab"];
-        store.set("UserscriptPPSettings", other);
+        // 管理器没有值变化监听(AdGuard):别的标签页悄悄把存储改成别的(版本加一),本页再写一次和上次相同的内容,也要真的写进去
+        const other = val(SKP + "Settings");
+        other.starredPlugins = ["other-tab"];
+        other.$rev += 1; other.$writer = "zzzzother";
+        store.set(SKP + "Settings", other);
         S.starredPlugins = ["x"]; S.starredPlugins = ["a", "b"]; await sleep(250);
-        const kept = store.get("UserscriptPPSettings");
-        out.saveProbe = { firstWrites: w1 - w0, sameWrites: w2 - w1, changedWrites: w3 - w2, staleWrites: settingsWrites - w3, stored: (typeof kept === "string" ? JSON.parse(kept) : kept).plugins.Settings.starredPlugins };
+        out.saveProbe = { firstWrites: w1 - w0, sameWrites: w2 - w1, changedWrites: w3 - w2, staleWrites: settingsWrites - w3, stored: readDoc().plugins.Settings.starredPlugins };
         console.log(JSON.stringify(out, null, 1));
         console.log("ERRORS:", errors.length ? errors.join("\n") : "none");
         console.log("LOGS:");
@@ -123,7 +134,7 @@ if (!process.env.MERGE_CASE) (async () => {
     P.Settings.plugins.Settings.starredPlugins = ["x"];
     await sleep(300);
     out.siteStorage = w.localStorage.getItem(SK);
-    const saved = store.get("UserscriptPPSettings");
+    const saved = readDoc();
     out.staleCleaned = { kept: !!saved.plugins.GrokChatBar, keptSince: typeof saved.plugins.Settings.pluginsLastSeen?.GrokChatBar, expired: !saved.plugins.SomeGrokPlugin, recordGone: !("SomeGrokPlugin" in (saved.plugins.Settings.pluginsLastSeen || {})) };
     out.here = saved.plugins.Settings.sites?.[new w.URL(url).hostname]?.customCSS;
     // 菜单命令打开框架设置面板

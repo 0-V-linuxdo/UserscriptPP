@@ -31,13 +31,19 @@ export const allowedSelfRefs = key => [...(allowed.get(key) || [])];
 
 /** 插件门面的目标:按名字现查(热替换插件后自动指向新定义) */
 export function setPluginResolver(fn) { pluginResolver = typeof fn === "function" ? fn : () => null; }
-/** 插件是否"补丁还在、插件已停"(出错太多被停掉、关了但补丁本页仍在、依赖被停掉):这时门面上的函数是空操作、值为 undefined */
+/** 插件是否"补丁还在、插件已停"(没在运行的一律算:出错太多被停掉、启动失败、关了但补丁本页仍在、依赖被停掉):
+ *  这时门面上的函数原样返回第一个参数(或 selfFallback 给的降级),值为 undefined(或 selfFallback 给的值) */
 let pluginDead = () => false;
 export function setPluginDeadCheck(fn) { pluginDead = typeof fn === "function" ? fn : () => false; }
-const NOOP = () => undefined;
+/** 插件停了时门面上函数的缺省行为:原样返回第一个参数。补丁常把站点自己的值传过插件(例如 $self.extras(id, items)),
+ *  插件停了就该原样交还,而不是变成 undefined 把站点的内容删掉。插件可在 selfFallback 里为某个名字给出别的降级 */
+const PASS = a => a;
 const deadHits = new Map(); // 插件名 -> 插件停了之后补丁还调用它的次数
 export const deadSelfHits = () => Object.fromEntries(deadHits);
 export function setSelfTarget(key, getTarget) { resolvers.set(key, getTarget); }
+/** 调用门面上的函数:由入口注入,插件的方法以插件自己的身份运行(不归恰好在栈上的别的插件) */
+let invoke = (t, fn, a) => fn.apply(t, a);
+export function setSelfInvoker(fn) { invoke = typeof fn === "function" ? fn : (t, f, a) => f.apply(t, a); }
 
 const targetOf = key => key.startsWith("plugin:") ? pluginResolver(key.slice(7)) : resolvers.get(key)?.() ?? null;
 
@@ -45,7 +51,7 @@ function bound(target, fn) {
     let byFn = boundCache.get(target);
     if (!byFn) boundCache.set(target, byFn = new Map());
     let b = byFn.get(fn);
-    if (!b) byFn.set(fn, b = function (...a) { return fn.apply(target, a); });
+    if (!b) byFn.set(fn, b = function (...a) { return invoke(target, fn, a); });
     return b;
 }
 
@@ -60,7 +66,9 @@ export function selfFacade(key) {
             const v = t[prop];
             if (key.startsWith("plugin:") && pluginDead(t)) {
                 deadHits.set(t.name, (deadHits.get(t.name) || 0) + 1);
-                return typeof v === "function" ? NOOP : undefined;
+                const fb = t.selfFallback && Object.prototype.hasOwnProperty.call(t.selfFallback, prop) ? t.selfFallback[prop] : undefined;
+                if (typeof v === "function") return typeof fb === "function" ? fb : PASS;
+                return fb;
             }
             return typeof v === "function" ? bound(t, v) : v;
         },

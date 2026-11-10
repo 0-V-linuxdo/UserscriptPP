@@ -3,7 +3,7 @@ import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorB
 import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
-    plugins, isPluginEnabled, setPluginEnabled, restartPlugin, pluginPhase, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf, noteRestartSetting,
+    plugins, isPluginEnabled, setPluginEnabled, restartPlugin, pluginPhase, pluginStatus, canRestartPlugin, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf, noteRestartSetting,
 } from "../lib/plugins.js";
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
@@ -38,7 +38,8 @@ function visiblePlugins() {
 function useLive() {
     const force = useForceUpdate();
     useEffect(() => {
-        const offs = [Events.PLUGIN_TOGGLE, Events.PLUGIN_PIN, Events.PLUGIN_STAR].map(e => subscribe(e, () => force()));
+        // 阶段变化(熔断、async start 完成、依赖被停、启动阶段到了)也重绘:卡片订阅状态,不只订阅可能导致状态变化的事件
+        const offs = [Events.PLUGIN_TOGGLE, Events.PLUGIN_PIN, Events.PLUGIN_STAR, Events.PLUGIN_PHASE].map(e => subscribe(e, () => force()));
         const fn = () => force();
         SettingsStore.addPrefixChangeListener("plugins.", fn);
         const offSlot = onSlotChange("settings.pluginActions", fn);
@@ -66,9 +67,24 @@ function useReloadTracker() {
     };
     return {
         get showBanner() { return t.dismissed && pendingReload.size > 0; },
-        onToggled: p => { if (pendingReload.has(p.name)) prompt(); else setTick(x => x + 1); },
+        // need:这次切换新增了要刷新的插件(含连带的依赖)
+        onToggled: (p, need) => { if (need || pendingReload.has(p.name)) prompt(); else setTick(x => x + 1); },
         onSettingRestart: (name, key, before) => { noteRestartSetting(name, key, before); if (pendingReload.has(name)) prompt(); else setTick(x => x + 1); },
     };
+}
+
+/** 被依赖拖住、又不能 Restart 时的说明 */
+function blockedText(st) {
+    const d = st.detail ?? "a plugin it needs";
+    switch (st.reason) {
+        case "depWaiting": return `Waiting for ${d} to start`;
+        case "depReload": return `${d} needs a page reload first`;
+        case "depSafeMode": return `${d} doesn't run in safe mode`;
+        case "depMissing": return `${d} isn't available on this site`;
+        case "depCycle": return `Circular dependency on ${d}`;
+        case "depDisabled": return `${d} is disabled by a debug switch`;
+        default: return null;
+    }
 }
 
 function Badges({ p }) {
@@ -95,13 +111,15 @@ function PluginCard({ p, tracker }) {
     const pinned = listSetting("pinnedPlugins").includes(p.name);
     const failed = !p.started && !!p.startError;
     const byDependency = isEnabledAsDependency(p.name);
-    const phase = pluginPhase(p);
-    // 开关只表示用户意图;出错被停、启动失败、被依赖拖住的另有"Restart"按钮
-    const canRestart = phase === "tripped" || phase === "failed" || (phase === "blocked" && enabled);
+    const status = pluginStatus(p);
+    const phase = status.phase;
+    // 开关只表示用户意图;出错被停、启动失败、依赖被停的另有"Restart"按钮。依赖还在等启动阶段、要刷新、不存在时不给(点了也没用),只说明原因
+    const canRestart = enabled && canRestartPlugin(p);
+    const blockedWhy = phase === "blocked" ? blockedText(status) : null;
     const onToggle = async () => {
         // 开还是关按点击时的状态定,之后只发"设成某个值"
         if (isPluginEnabled(p.name)) await turnOffPlugin(p.name, q => tracker.onToggled(q));
-        else { setPluginEnabled(p.name, true); tracker.onToggled(p); }
+        else tracker.onToggled(p, setPluginEnabled(p.name, true));
     };
     const hasSettings = getVisibleSettings(p).length > 0;
     const showPreview = hasPreview(p);
@@ -131,7 +149,8 @@ function PluginCard({ p, tracker }) {
             btn("star", starred ? StarFillIcon : StarIcon, starred ? "Unstar" : "Star", toggleStar, starred),
             !p.required && btn("pin", pinned ? PinFillIcon : PinIcon, pinned ? "Unpin" : "Pin", togglePin, pinned),
             hasSettings && h(Tooltip, { key: "cfg", content: "config" }, btn(null, SlidersIcon, "config", openConfig)),
-            canRestart && h(Tooltip, { key: "restart", content: phase === "blocked" ? "A plugin it needs was stopped; restart both" : phase === "failed" ? "Failed to start; try again" : "Turned off on this page after too many errors; start it again" },
+            !canRestart && blockedWhy && h(Tooltip, { key: "blocked", content: blockedWhy }, h("span", { className: "uspp-badge", "data-uspp-blocked": p.name }, "Waiting")),
+            canRestart && h(Tooltip, { key: "restart", content: phase === "blocked" ? `${status.detail ?? "A plugin it needs"} was stopped; restart both` : phase === "failed" ? "Failed to start; try again" : "Turned off on this page after too many errors; start it again" },
                 h(Button, { size: "sm", "data-uspp-restart": p.name, onClick: () => restartPlugin(p.name) }, "Restart")),
             p.required
                 // 必需插件:开关保持正常的“已开启”外观,只是锁住不能关;提示挂在外层 span 上(disabled 按钮不触发悬停)

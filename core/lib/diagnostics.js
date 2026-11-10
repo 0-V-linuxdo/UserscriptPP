@@ -5,7 +5,8 @@ import { getSite } from "./sites.js";
 import { recentLogs } from "./logger.js";
 import { pluginErrorStats } from "./plugin-errors.js";
 import { blockedRequests } from "./net.js";
-import { isSafeMode, safeModeReason } from "./safemode.js";
+import { isSafeMode, safeModeReason, bootTrackingAvailable } from "./safemode.js";
+import { deadSelfHits } from "./bridge.js";
 
 let patchSummary = () => null;
 /** 由入口注入:补丁报告的摘要 */
@@ -24,7 +25,7 @@ export function collectDiagnostics() {
         `Script manager: ${`${info?.scriptHandler ?? "unknown"} ${info?.version ?? ""}`.trim()}${missingCapabilities().length ? ` · missing: ${missingCapabilities().join(", ")}` : ""}`,
         `Browser: ${ua}`,
         `Site: ${getSite().id} · ${(() => { try { return W.location.origin + W.location.pathname; } catch { return "?"; } })()}`,
-        `Safe mode: ${isSafeMode() ? `on (${safeModeReason()})` : "off"}`,
+        `Safe mode: ${isSafeMode() ? `on (${safeModeReason()})` : "off"}${bootTrackingAvailable() ? "" : " · crash detection unavailable (no sessionStorage)"}`,
         `Plugins: ${enabled.length} enabled of ${all.length}`,
         `Enabled: ${enabled.map(p => p.name + (p.started ? "" : ` (${pluginPhase(p)})`)).join(", ") || "none"}`,
         `Failed to start: ${failed.map(p => `${p.name}: ${p.startError?.message ?? "unknown"}`).join("; ") || "none"}`,
@@ -33,6 +34,8 @@ export function collectDiagnostics() {
     if (blocked.length) lines.push(`Blocked requests: ${[...new Set(blocked.map(b => b.plugin ? `${b.host} (${b.plugin})` : b.host))].join(", ")}`);
     const errs = pluginErrorStats();
     if (errs.length) lines.push(`Runtime errors: ${errs.slice(0, 8).map(e => `${e.name} ×${e.count}${e.tripped ? " (turned off)" : ""}: ${e.last?.where ?? "?"}: ${e.last?.message ?? ""}`.slice(0, 200)).join("; ")}`);
+    const dead = Object.entries(deadSelfHits());
+    if (dead.length) lines.push(`Patches calling stopped plugins: ${dead.map(([n, c]) => `${n} ×${c}`).join(", ")}`);
     const slow = slowestStarts(5);
     if (slow.length) lines.push(`Slowest starts: ${slow.map(s => `${s.name} ${s.ms} ms`).join(", ")}`);
     if (patches) lines.push(`Patches: ${JSON.stringify(patches)}`);

@@ -37,10 +37,14 @@ const px = `uspp-${ID}-`;
     w.GM_unregisterMenuCommand = () => { };
     const sysNotes = [];
     w.GM_notification = o => sysNotes.push(o.title);
-    if (MODE === "safe") store.set("UserscriptPPBoot", { force: true });
-    if (MODE === "crash") store.set("UserscriptPPBoot", { pending: 2, at: Date.now() - 1000, lastPlugin: "Breaker" });
+    // 安全模式的启动记录按标签页存在 sessionStorage 里
+    const BOOT = `UserscriptPPBoot:${ID}`;
+    const bootGet = () => { try { return JSON.parse(w.sessionStorage.getItem(BOOT) || "null"); } catch { return null; } };
+    const bootSet = v => w.sessionStorage.setItem(BOOT, JSON.stringify(v));
+    if (MODE === "safe") bootSet({ force: true });
+    if (MODE === "crash") bootSet({ pending: 2, at: Date.now() - 1000, lastPlugin: "Breaker" });
     // 上一次启动也没等满 10 秒就关了:这一次在站点就绪后、10 秒内关页面,不应再计入
-    if (MODE === "pagehide") store.set("UserscriptPPBoot", { pending: 1, at: Date.now() - 1000 });
+    if (MODE === "pagehide") bootSet({ pending: 1, at: Date.now() - 1000 });
     // 页面的 fetch:回显地址和请求体
     w.Response = globalThis.Response; w.Headers = globalThis.Headers; w.Request = globalThis.Request;
     const pageFetch = async (u, init) => new globalThis.Response(JSON.stringify({ url: String(u?.url ?? u), body: init?.body ?? null }), { headers: { "content-type": "application/json" } });
@@ -63,11 +67,11 @@ const px = `uspp-${ID}-`;
     if (MODE === "pagehide") {
         // 就绪之前关页面仍然计入
         w.dispatchEvent(new w.Event("pagehide"));
-        out.pendingEarly = store.get("UserscriptPPBoot")?.pending;
+        out.pendingEarly = bootGet()?.pending;
         await Promise.race([U.onceReady, sleep(6000)]);
-        out.pendingBefore = store.get("UserscriptPPBoot")?.pending;
+        out.pendingBefore = bootGet()?.pending;
         w.dispatchEvent(new w.Event("pagehide"));
-        out.boot = store.get("UserscriptPPBoot");
+        out.boot = bootGet();
         finish();
         return;
     }
@@ -77,7 +81,7 @@ const px = `uspp-${ID}-`;
         out.started = Object.values(U.plugins).map(p => `${p.name}:${p.started}`);
         out.notice = uiOf(doc, `${px}root`)?.querySelector(`.${px}notice`)?.textContent ?? null;
         out.quickCssApplied = !!doc.querySelector(`style[data-uspp-${ID}="quick-css"]`);
-        out.boot = store.get("UserscriptPPBoot");
+        out.boot = bootGet();
         finish();
         return;
     }
@@ -411,7 +415,7 @@ const px = `uspp-${ID}-`;
             nav1, shown, nav2, cardText, clicked, history: U.getNotificationHistory().map(n => n.title), sysNotes,
             failed: failedText.includes("kaboom"), startError: U.plugins.Breaker.startError?.message,
             diag: { name: diag.includes("Userscript++ Example"), failed: diag.includes("Breaker: kaboom"), noValues: !diag.includes("keybinds") },
-            boot: store.get("UserscriptPPBoot"),
+            boot: bootGet(),
         };
         logs.splice(0);
     }
@@ -449,9 +453,17 @@ const px = `uspp-${ID}-`;
                 ctx.setTimeout(async () => { await 0; throw new Error("async timer boom"); }, 0);
                 ctx.reportError(new Error("own boom"), "custom");
                 await 0;
-                throw new Error("late start boom");
             },
         }));
+        // async start() 被拒绝 = 启动失败(不是运行期错误):回滚,阶段 failed,startPluginAsync 兑现 failed
+        let lateStopped = 0;
+        U.registerPlugin(U.definePlugin({
+            name: "LateFail", description: "x", authors: ["t"],
+            async start(ctx) { ctx.listen(doc, "late-ev", () => { }); await 0; throw new Error("late start boom"); },
+            stop() { lateStopped++; },
+        }));
+        const lateFinal = await U.startPluginAsync("LateFail");
+        out.lateFail = { final: lateFinal, phase: U.pluginPhase("LateFail"), started: U.plugins.LateFail.started, error: U.plugins.LateFail.startError?.message ?? null, reason: U.pluginStatus("LateFail").reason, stopped: lateStopped, runtime: U.pluginErrorStats().find(e => e.name === "LateFail")?.count ?? 0 };
         U.startPlugin("Flaky");
         await sleep(30);
         const before = U.pluginErrorStats().find(e => e.name === "Flaky");

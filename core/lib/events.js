@@ -6,6 +6,8 @@ const handlers = new Map();
 
 export const Events = Object.freeze({
     PLUGIN_TOGGLE: "pluginToggle",
+    /** 插件阶段变了:{ changes: [{ name, from, to }] }(收敛结束、熔断、async start 完成或失败时发) */
+    PLUGIN_PHASE: "pluginPhase",
     PLUGIN_PIN: "pluginPin",
     PLUGIN_STAR: "pluginStar",
     RELOAD_NEEDED: "reloadNeeded",

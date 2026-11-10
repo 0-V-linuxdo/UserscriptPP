@@ -32,7 +32,14 @@ function install(obj, name) {
                 if (!hk.instead) continue;
                 const inner = next;
                 next = a => {
-                    try { return hk.instead(a, (...x) => inner(x.length ? x : a), self); } catch (e) { logger.error(`instead 补丁(${hk.label})出错,改用原方法`, e); return inner(a); }
+                    // 原方法(或里层的补丁)自己抛的错照常抛出,不算这个 instead 的错,也不再调用一次原方法
+                    let innerThrew = false;
+                    const callInner = x => { try { return inner(x); } catch (e) { innerThrew = true; throw e; } };
+                    try { return hk.instead(a, (...x) => callInner(x.length ? x : a), self); } catch (e) {
+                        if (innerThrew) throw e;
+                        logger.error(`instead 补丁(${hk.label})出错,改用原方法`, e);
+                        return inner(a);
+                    }
                 };
             }
             result = next(args);

@@ -43,8 +43,8 @@ import { openSettingsPanel, closeSettingsPanel } from "./settings/SettingsPanel.
 import { PluginModal } from "./settings/PluginModal.js";
 import { checkPatches, describeResult, crawlChunks, extractChunkPaths } from "./lib/reporter.js";
 import { trackFinders, failedFinders } from "./lib/finder-log.js";
-import { ownByCurrent, adopt } from "./lib/scope.js";
-import { installBridge, setPluginResolver, setSelfTarget, setPluginDeadCheck } from "./lib/bridge.js";
+import { ownByCurrent, adopt, currentOwner, addScopedSlotItem, runAs } from "./lib/scope.js";
+import { installBridge, setPluginResolver, setSelfTarget, setPluginDeadCheck, setSelfInvoker } from "./lib/bridge.js";
 import { patchMethod, isPatched } from "./lib/patcher.js";
 import { rewriteRequest, rewriteResponse, onWebSocket, onEventSource, makeResponse } from "./lib/network.js";
 import { dataStoreFor, exportData, importData, pruneData } from "./lib/datastore.js";
@@ -66,6 +66,8 @@ import { checkForUpdate, installUpdate, CHANGELOG } from "./lib/updater.js";
 import { openChangelog } from "./settings/UpdatesTab.js";
 
 // U.* 登记的回调以登记时的插件身份运行;方法补丁的 instead 在主人停了时调用原方法
+const adoptItem = def => def && typeof def === "object"
+    ? { ...def, ...Object.fromEntries(["onClick", "onSelect", "render", "patch"].filter(k => typeof def[k] === "function" && !(def[k].prototype && def[k].prototype.isReactComponent)).map(k => [k, adopt(def[k])])) } : def;
 const adoptHooks = hooks => hooks && typeof hooks === "object" ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, k === "instead" ? adopt(v, (args, next) => next(...args)) : adopt(v)])) : hooks;
 
 const logger = new Logger("Core", "#c4b5fd");
@@ -416,6 +418,7 @@ function main() {
         setPluginEnabled: P.setPluginEnabled,
         restartPlugin: P.restartPlugin,
         pluginPhase: P.pluginPhase,
+        pluginStatus: P.pluginStatus,
         reloadNeeded: () => [...P.pendingReload],
         definePlugin: P.definePlugin,
         definePluginSettings: P.definePluginSettings,
@@ -437,7 +440,8 @@ function main() {
         patchResults: T.patchResults,
         patchReport: () => ({ ...T.patchReport(), notApplicable: [...P.patchesNotApplicable] }),
         getPatchedCode: T.getPatchedCode,
-        onPatchBypassed: T.onPatchBypassed,
+        // 这几个登记函数的回调也以登记它的插件身份运行(站点兜底钩子在回调里装,不能归到恰好在栈上的别的插件)
+        onPatchBypassed: (name, cb) => ownByCurrent(T.onPatchBypassed(name, adopt(cb))),
         registerInjectionFallback: T.registerInjectionFallback,
         // 模块查找
         filters: F.filters,
@@ -448,11 +452,11 @@ function main() {
         findByDisplayNameLazy: F.findByDisplayNameLazy, findComponentByCodeLazy: F.findComponentByCodeLazy,
         findExportedComponentLazy: F.findExportedComponentLazy, findStoreLazy: F.findStoreLazy,
         findModuleId: F.findModuleId, findModuleFactory: F.findModuleFactory,
-        mapMangledModule: F.mapMangledModule, mapMangledModuleLazy: F.mapMangledModuleLazy, requireModule: F.requireModule, waitFor: F.waitFor,
+        mapMangledModule: F.mapMangledModule, mapMangledModuleLazy: F.mapMangledModuleLazy, requireModule: F.requireModule, waitFor: (filter, cb, ms) => ownByCurrent(F.waitFor(filter, adopt(cb), ms)),
         findCssClasses: F.findCssClasses, findCssClassesLazy: F.findCssClassesLazy, mapMangledCssClasses: F.mapMangledCssClasses, findBulk: F.findBulk,
         extractAndLoadChunks: F.extractAndLoadChunks, extractAndLoadChunksLazy: F.extractAndLoadChunksLazy, DefaultChunkLoadRegex: F.DefaultChunkLoadRegex,
         loadChunk: F.loadChunk, importModule: F.importModule, injectExports: T.injectExports,
-        search: F.search, onModuleLoad: T.onModuleLoad, onceReady, getAllStores: F.getAllStores,
+        search: F.search, onModuleLoad: cb => ownByCurrent(T.onModuleLoad(adopt(cb))), onceReady, getAllStores: F.getAllStores,
         isZustandStore: F.isZustandStore, findReact: F.getReact,
         // 被其他脚本包装执行的模块只在运行时缓存里:并入本系统的缓存;版本号在缓存变化时递增
         syncModuleCache: () => { try { T.syncRuntimeCache(); } catch { /* 无打包器 */ } }, moduleCacheVersion: T.getCacheVersion,
@@ -472,12 +476,20 @@ function main() {
         // 插件数据
         DataStore: { for: dataStoreFor },
         // 注入点
-        addSlotItem, removeSlotItem, getSlotItems, onSlotChange: (slot, fn) => ownByCurrent(onSlotChange(slot, adopt(fn))), getSlotVersion,
+        // 在插件里调用时归这个插件(停了自动撤掉,同 id 再加是替换);不在任何插件里调用时不归谁,回调也以无主身份运行
+        addSlotItem: (slot, id, def) => {
+            const owner = currentOwner();
+            const own = owner ? addScopedSlotItem(owner, slot, id, def) : null;
+            if (own) return own;
+            addSlotItem(slot, id, adoptItem(def));
+            return () => removeSlotItem(slot, id);
+        },
+        removeSlotItem, getSlotItems, onSlotChange: (slot, fn) => ownByCurrent(onSlotChange(slot, adopt(fn))), getSlotVersion,
         renderSlot, SlotOutlet, applyMenuPatches,
         // 拦截器
         addInterceptor: (name, fn, opts) => ownByCurrent(addInterceptor(name, adopt(fn), opts)), runInterceptors, hasInterceptors,
         // 命令、搜索栏、快捷键
-        registerCommand: def => ownByCurrent(registerCommand(def)), runCommand, getCommands, keyFor, openPalette, closePalette,
+        registerCommand: def => ownByCurrent(registerCommand(def && typeof def.run === "function" ? { ...def, run: adopt(def.run) } : def)), runCommand, getCommands, keyFor, openPalette, closePalette,
         // 安全模式、诊断
         isSafeMode, reloadInSafeMode, exitSafeMode, collectDiagnostics, copyDiagnostics, pluginErrorStats, openFailedPlugins: openFailedList,
         // 更新
@@ -542,7 +554,10 @@ function main() {
     installNamespaces(api);
     // 页面上只挂页面桥(补丁用的门面和编译槽),完整接口 api 不出闭包
     setPluginResolver(name => P.plugins[name] ?? null);
-    setPluginDeadCheck(p => ["tripped", "reloadToDisable", "blocked"].includes(P.pluginPhase(p)));
+    setSelfInvoker((t, fn, a) => (t && P.plugins[t.name] === t ? runAs(t.name, () => fn.apply(t, a)) : fn.apply(t, a)));
+    // 白名单:在运行、async start 还没完成、或开着只等启动阶段(补丁可能先于 SiteReady 执行)的插件算活;
+    // 启动失败、熔断、依赖被停、关了但补丁还在,都算已停
+    setPluginDeadCheck(p => !["running", "starting", "waiting"].includes(P.pluginPhase(p)));
     setSelfTarget("settingsHost", () => Sites.getSite().settingsHost ?? null);
     installBridge(W, api);
     // 控制台调试入口:挂到本脚本自己配置的名字上;已被占用时不覆盖
@@ -634,7 +649,8 @@ function main() {
                 trace("hot.replace", ev.name, r);
                 if (r.reason === "patches") notify({ title: "Hot reload", body: `${ev.name} has bundler patches: reinstall the dev build and reload.`, type: "warning" });
                 else if (!r.ok) showToast(`${ev.name} failed to restart: ${r.error?.message ?? r.reason}`, ToastType.ERROR);
-                else showToast(`Reloaded ${ev.name}`, ToastType.SUCCESS);
+                else if (r.started) showToast(`Reloaded ${ev.name}`, ToastType.SUCCESS);
+                else showToast(`Replaced ${ev.name} (not running: ${r.phase})`, ToastType.INFO);
             },
             onFull(reason) {
                 notify({ title: "Dev build rebuilt", body: `Reinstall the dev build and reload the page${reason ? ` (${reason})` : ""}.`, type: "info" });
@@ -642,6 +658,8 @@ function main() {
         }));
         step("记录插件", P.recordKnownPlugins);
         step("强制依赖", P.enforceDependencies);
+        // 页面加载时的配置快照(不论有没有打包器驱动):之后"要刷新才生效"都和它比较
+        step("记下启动配置", P.bootSnapshot);
         if (site.driver === "turbopack" || site.driver === "webpack") step("核对补丁计划", () => {
             const changed = P.checkPatchPlan();
             if (!changed.length) return;

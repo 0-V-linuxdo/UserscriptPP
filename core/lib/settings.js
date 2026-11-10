@@ -223,9 +223,7 @@ const TAB_WRITER = (() => {
     try { if (W.crypto?.randomUUID) return W.crypto.randomUUID().replace(/-/g, "").slice(0, 16); } catch { /* 忽略 */ }
     return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
 })();
-/** 本页知道的最新版本:读到的、收到的、自己写的;下次保存用 rev + 1 */
-let known = { rev: 0, writer: "" };
-const seeRev = data => { const v = verOf(data); if (cmpVer(v, known) > 0) known = v; return v.rev; };
+
 
 /** 接受对象、JSON 字符串、二次编码的 JSON 字符串 */
 
@@ -242,6 +240,8 @@ export function parseStored(raw) {
                 delete v[k];
                 Object.defineProperty(v, k, { value: n, enumerable: false, configurable: true });
             }
+            // localStorage 镜像里的版本信息不算设置
+            delete v.$mirror;
             if (v.plugins && typeof v.plugins === "object" && Object.keys(v.plugins).length > 0) return v;
         }
     } catch { /* 视为没有 */ }
@@ -328,11 +328,19 @@ const BOOT_KEY = `${SITE_STORAGE_KEY}:boot`;
 export function loadSync() {
     if (!GM.get) { asyncOnlyGm = true; return false; }
     try {
-        const raw = GM.get(STORAGE_KEY);
-        if (raw && typeof raw.then === "function") { asyncOnlyGm = true; return false; }
-        const data = parseStored(raw);
-        if (data) {
-            seeRev(data);
+        const probe = GM.get(META_KEY);
+        if (probe && typeof probe.then === "function") { asyncOnlyGm = true; return false; }
+        const v2 = readV2();
+        let data = null;
+        if (v2) { data = v2.data; adoptV2(v2); }
+        else {
+            // 旧格式(整份一个键):读出来用,就绪后按新格式写一遍
+            const raw = GM.get(STORAGE_KEY);
+            if (raw && typeof raw.then === "function") { asyncOnlyGm = true; return false; }
+            data = parseStored(raw);
+            if (data) migrate = true;
+        }
+        if (data && data.plugins && Object.keys(data.plugins).length) {
             syncBase = JSON.parse(serialize(data), reviver);
             const pre = [...explicit];
             replaceContents(data);
@@ -402,21 +410,40 @@ function fillFrom(into, from) {
 /** 站点存储(IndexedDB、localStorage)按网站分开,只作当前网站的备份:只在有适配的站点上读写,不把设置留在随便访问的网站 */
 const useSiteStorage = () => !isGeneric();
 
-/** 就绪前收到的别的标签页的写入:就绪后补上(最新的一份) */
-let pendingRemote = null;
 
 /**
  * 读取完整设置。脚本管理器存储(GM)是唯一权威:GM 里有带版本的设置就只用它,站点里的 IndexedDB / localStorage 副本只是备份,
  * 只在 GM 没有内容(卸载重装、清空存储)或 GM 里是旧版本写的、没有版本号的副本时才拿来比较和救回;救回后立即写回 GM
  */
 export async function loadAsync() {
-    let gm = null;
-    try { gm = parseStored(GM.get ? await GM.get(STORAGE_KEY) : null); } catch (e) { logger.debug("从 GM 读取失败", e); }
+    let v2 = null, legacy = null;
+    try {
+        v2 = await awaitMaybe(readV2());
+        if (!v2 && GM.get) legacy = parseStored(await awaitMaybe(GM.get(STORAGE_KEY)));
+    } catch (e) { logger.debug("从 GM 读取失败", e); }
+    if (v2 && !Object.keys(v2.data.plugins).length) v2 = null;
     const stamped = d => !!(revOf(d) || savedAtOf(d));
     let chosen = null, restored = false;
-    if (gm && stamped(gm)) chosen = { name: "GM", data: gm };
+    if (v2) {
+        adoptV2(v2);
+        chosen = { name: "GM", data: v2.data };
+        // 镜像只"快进":它是从 GM 现在那个版本接着写下来的(base 等于 GM 的版本)、又比 GM 新,说明 GM 没落盘这次写入(例如关页面时),用镜像的并补写回 GM
+        const m = readMirror();
+        if (m) for (const [part, ver] of m.vers) {
+            const gmVer = v2.vers.get(part) || noVer;
+            const base = m.base.get(part);
+            if (!base || cmpVer(ver, gmVer) <= 0 || cmpVer(base, gmVer) !== 0) continue;
+            if (part === META) Object.assign(chosen.data, metaContentOf(m.doc));
+            else if (m.doc.plugins[part] !== undefined) chosen.data.plugins[part] = m.doc.plugins[part];
+            else delete chosen.data.plugins[part];
+            forceParts.add(part);
+            lastBody.delete(part);
+            restored = true;
+            logger.info(`本页上次写入的 ${part === META ? "顶层设置" : part} 没落到脚本管理器存储里,已从本站镜像补回`);
+        }
+    } else if (legacy && stamped(legacy)) { chosen = { name: "GM", data: legacy }; migrate = true; }
     else {
-        const found = gm ? [{ name: "GM", data: gm, rev: revOf(gm), at: savedAtOf(gm), score: richness(gm) }] : [];
+        const found = legacy ? [{ name: "GM", data: legacy, rev: revOf(legacy), at: savedAtOf(legacy), score: richness(legacy) }] : [];
         if (useSiteStorage()) {
             for (const [name, read] of [["IndexedDB", () => idbGet(SITE_STORAGE_KEY)], ["localStorage", lsGet]]) {
                 try {
@@ -433,11 +460,11 @@ export async function loadAsync() {
             chosen = found[0];
             if (!chosen.at && !chosen.rev) for (const f of found.slice(1)) fillFrom(chosen.data, f.data);
             restored = chosen.name !== "GM";
+            migrate = true;
         }
     }
     if (chosen) {
         const data = chosen.data;
-        seeRev(data);
         // 就绪前内存里新产生的(插件默认值、早期写入)补进去;同步读取时从(可能较旧的)GM 副本带进来的不补
         const memory = withoutSame(JSON.parse(serialize(PlainSettings), reviver), syncBase);
         syncBase = null;
@@ -449,83 +476,225 @@ export async function loadAsync() {
     }
     ready = true;
     writeBootSnapshot();
-    if (restored && GM.set) {
-        // GM 里没有:从站点备份救回,写回 GM(之后别的站点也能读到)
-        logger.info(`脚本管理器存储里没有设置,已从本站的 ${chosen.name} 备份救回并写回`);
-        lastGmBody = null;
+    if ((restored || migrate) && GM.set) {
+        // GM 里没有(或是旧格式、或镜像补回了一部分):写回 GM(之后别的站点也能读到)
+        if (restored) logger.info(`已从本站的 ${chosen.name === "GM" ? "镜像" : chosen.name} 救回设置并写回脚本管理器存储`);
         scheduleSave();
     }
-    if (pendingRemote) { const d = pendingRemote; pendingRemote = null; applyRemote(d); }
-    // 启动过程不落盘:只有之后真正改了设置才写(救回的除外)
+    for (const [part, x] of [...pendingParts]) { pendingParts.delete(part); applyRemotePart(part, x.content, x.ver, x.extra); }
+    // 启动过程不落盘:只有之后真正改了设置才写(救回、迁移的除外)
     return !!chosen;
 }
+
+// ---------- 存储布局(第 2 版:按插件分键) ----------
+// GM 里:META_KEY 存顶层设置(不含 plugins)和已知插件的名单 $parts;每个插件的设置单独存在 PART_PREFIX + 名字。
+// 每一份(part)各带自己的版本 ($rev, $writer):两个标签页改不同插件的设置不再冲突,同一份冲突时影响面只有这一份。
+// 旧版本的整份设置(STORAGE_KEY)只在新格式不存在时读一次并迁移,之后不再写它(旧版本脚本的标签页刷新后才看到新设置)。
+export const META_KEY = `${STORAGE_KEY}:meta`;
+export const PART_PREFIX = `${STORAGE_KEY}:p:`;
+const META = "$meta";
+const FORMAT = 2;
+const partKey = part => (part === META ? META_KEY : PART_PREFIX + part);
+/** 路径属于哪一份:顶层键 -> 元信息;plugins.<名>... -> 那个插件;plugins 本身 -> 全部插件 */
+function partsOfPath(path) {
+    const parts = path.split(".");
+    if (parts[0] !== "plugins") return [META];
+    if (parts.length === 1) return Object.keys(PlainSettings.plugins || {});
+    return [parts[1]];
+}
+const noVer = { rev: 0, writer: "" };
+const partVer = new Map();   // 份 -> 本页内存里那份的版本(读到的、收到的、自己写的)
+const lastBody = new Map();  // 份 -> 存储里现在那份的内容(序列化,不含版本);没变就不写
+const knownParts = new Set(); // 存储里出现过的插件份(只增不减,删除用墓碑)
+let migrate = false;          // 读到的是旧格式或从站点备份救回:就绪后整份按新格式写一遍
+
+/** 读一份存储值:对象或 JSON 字符串;返回 { content, ver } 或 null */
+function parsePart(raw) {
+    try {
+        let v = raw;
+        for (let i = 0; i < 3 && typeof v === "string"; i++) v = JSON.parse(v, reviver);
+        if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+        v = JSON.parse(JSON.stringify(v), reviver);
+        const ver = { rev: Number(v[REV]) || 0, writer: typeof v[WRITER] === "string" ? v[WRITER] : "" };
+        const out = { content: v, ver, savedAt: Number(v[SAVED_AT]) || 0, parts: Array.isArray(v.$parts) ? v.$parts.filter(x => typeof x === "string") : [], deleted: v.$deleted === true };
+        for (const k of [...META_KEYS, "$parts", "$v", "$deleted"]) delete v[k];
+        // 插件设置不是对象时(少见)包在 $value 里
+        if (Object.keys(v).length === 1 && "$value" in v) out.content = v.$value;
+        return out;
+    } catch { return null; }
+}
+/** 同步读一份;管理器的读取是异步的时返回 Promise */
+function readPart(part) {
+    if (!GM.get) return null;
+    try {
+        const raw = GM.get(partKey(part));
+        if (raw && typeof raw.then === "function") return raw.then(parsePart, () => null);
+        return parsePart(raw);
+    } catch { return null; }
+}
+const awaitMaybe = async v => (v && typeof v.then === "function" ? await v : v);
+
+/** 从 GM 读出第 2 版的整份设置:{ data, vers: Map, parts: Set } 或 null(没有新格式);同步接口直接返回,异步接口返回 Promise */
+function readV2() {
+    const meta = readPart(META);
+    const build = async metaV => {
+        if (!metaV) return null;
+        const data = { ...metaV.content, plugins: {} };
+        const vers = new Map([[META, metaV.ver]]);
+        const parts = new Set(metaV.parts);
+        for (const name of parts) {
+            const p = await awaitMaybe(readPart(name));
+            if (!p) continue;
+            vers.set(name, p.ver);
+            if (!p.deleted) data.plugins[name] = p.content;
+        }
+        return { data, vers, parts, savedAt: metaV.savedAt };
+    };
+    if (meta && typeof meta.then === "function") return meta.then(build);
+    // 同步路径:各份也同步读
+    if (!meta) return null;
+    const data = { ...meta.content, plugins: {} };
+    const vers = new Map([[META, meta.ver]]);
+    const parts = new Set(meta.parts);
+    for (const name of parts) {
+        const p = readPart(name);
+        if (!p || typeof p.then === "function") continue;
+        vers.set(name, p.ver);
+        if (!p.deleted) data.plugins[name] = p.content;
+    }
+    return { data, vers, parts, savedAt: meta.savedAt };
+}
+function adoptV2(v2) {
+    for (const [k, v] of v2.vers) partVer.set(k, v);
+    for (const n of v2.parts) knownParts.add(n);
+    lastBody.clear();
+    lastBody.set(META, serialize(metaContentOf(v2.data)));
+    for (const n of v2.parts) if (v2.data.plugins[n]) lastBody.set(n, serialize(v2.data.plugins[n]));
+}
+const metaContentOf = data => { const out = { ...data }; delete out.plugins; return out; };
+
+/** 要存下来的一份:插件设置里没明确设置过、又等于默认值的项不存;整条插件设置不存在时为 undefined(写墓碑) */
+function persistablePart(part) {
+    if (part === META) return metaContentOf(PlainSettings);
+    const entry = PlainSettings.plugins?.[part];
+    if (entry === undefined) return undefined;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const kept = {};
+    for (const [k, v] of Object.entries(entry)) if (explicit.has(`plugins.${part}.${k}`) || !isDefault(part, k, v)) kept[k] = v;
+    return kept;
+}
+const sortedParts = () => [...knownParts].sort();
+/** 一份的"内容指纹":元信息带上插件名单,插件份不存在时是墓碑 */
+const bodyOf = (part, content) => (part === META ? serialize({ ...content, $parts: sortedParts() }) : content === undefined ? "$deleted" : serialize(content));
 
 // ---------- 多标签页同步 ----------
 const under = (set, path) => {
     for (const d of set) if (d === path || d.startsWith(path + ".") || path.startsWith(d + ".")) return true;
     return false;
 };
+const getRel = (obj, rel) => (rel === "" ? obj : getPath(obj, rel));
+const prefixOf = part => (part === META ? "" : `plugins.${part}`);
+const relOf = (part, p) => { const pre = prefixOf(part); return pre === "" ? p : p === pre ? "" : p.slice(pre.length + 1); };
 
 /**
- * 本页写出、还没确认胜出的一次保存:{ ver, base, paths: Map<路径, 写出的值> }。
- * base 是写之前读到的存储内容(三方合并的基准)。别的标签页在同一个基准上同时写了同一个 rev 时,
+ * 本页写出、还没确认的那次保存,按份记:{ ver, base, paths: Map<路径, 写出的值> }。
+ * base 是写之前那份的内容(三方合并的基准)。别的标签页在同一个基准上同时写了同一个 rev 时,
  * 双方按版本决胜:对方没动过的路径保留本页的,双方都改了的听版本大的;本页还有没被对方带上的改动就再写一次
  */
-let inflight = null;
+const inflight = new Map();
+const forceParts = new Set(); // 没有改动、但存储里可能是过时的一份,下次保存要重写
 let reasserts = 0;
 const MAX_REASSERTS = 3;
 const VERIFY_MS = 400;
 let verifyTimer = 0;
+const pendingParts = new Map(); // 就绪前收到的
 
 function protectAndReassert(paths) {
     if (!paths.length) { reasserts = 0; return; }
     if (++reasserts > MAX_REASSERTS) { logger.warn(`设置和别的标签页反复冲突,已放弃重写:${paths.join(", ")}`); reasserts = 0; return; }
-    for (const p of paths) dirty.add(p);
-    lastGmBody = null;
+    for (const p of paths) { dirty.add(p); for (const part of partsOfPath(p)) lastBody.delete(part); }
     scheduleSave();
 }
 
-/** 别的标签页保存的整份设置:逐键合并进内存并照常发出变更通知(不触发写入,除非本页的改动被对方的同时写入覆盖) */
-export function applyRemote(data) {
-    if (!data || typeof data !== "object") return 0;
-    // 就绪前(异步读取还没完成)收到的:先记下,读完再用
-    if (!ready) { if (!pendingRemote || cmpVer(verOf(data), verOf(pendingRemote)) > 0) pendingRemote = data; return 0; }
-    const v = verOf(data);
-    const fromOther = v.writer !== TAB_WRITER;
-    // 和本页写出、还没确认的那次保存基于同一个版本(同一个 rev,不同写入者):是同时写的兄弟
-    const sibling = !!(inflight && fromOther && v.rev && v.rev === inflight.ver.rev);
-    if (!sibling && v.rev && cmpVer(v, known) < 0) {
-        // 过时的一份(例如经另一个通道晚到的,或落后的标签页写的):不用它。但它可能是存储里现在的内容,
-        // 下次保存不能因为"和上次写的一样"跳过;别的标签页写的,本页补写一次把存储改回最新
-        lastGmBody = null;
-        if (fromOther) scheduleSave();
+/**
+ * 别处写来的一份比本页的旧:存储里可能就是这份旧的。过一会儿再确认(本页可能先从广播、镜像知道了新版本,
+ * 管理器的值变化通知还在路上,马上读本页的 GM 缓存会误判),确认还是旧的才在下次保存时重写
+ */
+const staleTimers = new Map();
+function staleSeen(part) {
+    if (staleTimers.has(part)) return;
+    staleTimers.set(part, setTimeout(async () => {
+        staleTimers.delete(part);
+        const cur = partVer.get(part) || noVer;
+        let r;
+        try { r = await awaitMaybe(readPart(part)); } catch { r = null; }
+        if (r && cmpVer(r.ver, cur) >= 0) {
+            if (cmpVer(r.ver, cur) > 0) applyRemotePart(part, r.deleted ? undefined : r.content, r.ver, { parts: r.parts, deleted: r.deleted });
+            return;
+        }
+        forceParts.add(part);
+        lastBody.delete(part);
+        scheduleSave();
+    }, VERIFY_MS));
+}
+
+/** 把别的标签页写的一份合并进内存(逐键,照常发变更通知;本页没落盘的改动不被盖掉)。返回变了几项 */
+export function applyRemotePart(part, content, ver, extra = {}) {
+    if (!part || !ver) return 0;
+    if (!ready) {
+        const prev = pendingParts.get(part);
+        if (!prev || cmpVer(ver, prev.ver) > 0) pendingParts.set(part, { content, ver, extra });
         return 0;
     }
-    if (inflight && !sibling && v.rev > inflight.ver.rev) inflight = null; // 对方在本页这次写入之后写的:已包含它
-    // 版本号更大(或同时写的兄弟):写它的标签页已经看到过本页知道的全部内容,它没有的就是删掉了(包括整条插件设置)。
-    // 没有版本号(旧版本写的)或版本相同:整条插件设置和顶层键照旧不删
-    const newer = sibling || cmpVer(v, known) > 0;
+    // 元信息带来的插件名单只增不减:新出现的插件份,读进来并开始监听
+    const discovered = [];
+    if (part === META && Array.isArray(extra.parts)) for (const n of extra.parts) if (!knownParts.has(n)) { knownParts.add(n); discovered.push(n); }
+    const cur = partVer.get(part) || noVer;
+    const fromOther = ver.writer !== TAB_WRITER;
+    const fl = inflight.get(part);
+    const sibling = !!(fl && fromOther && ver.rev && ver.rev === fl.ver.rev);
+    const c = cmpVer(ver, cur);
+    let changed = 0;
+    if (sibling || c > 0) changed = mergePart(part, content, ver, extra, fl, sibling);
+    else if (c < 0 && fromOther) staleSeen(part);
+    for (const n of discovered) { watchPart(n); catchUpPart(n); }
+    return changed;
+}
+
+function mergePart(part, content, ver, extra, fl, sibling) {
+    if (fl && !sibling && ver.rev > fl.ver.rev) inflight.delete(part); // 对方在本页这次写入之后写的:已包含它
     const protect = new Set(dirty);
     const keep = [];
     if (sibling) {
-        const theirsWin = cmpVer(v, inflight.ver) > 0;
-        for (const [p, ours] of inflight.paths) {
-            const theirs = getPath(data, p);
-            const changedByThem = !inflight.base || serialize(theirs ?? null) !== serialize(getPath(inflight.base, p) ?? null);
+        const theirsWin = cmpVer(ver, fl.ver) > 0;
+        for (const [p, ours] of fl.paths) {
+            const rel = relOf(part, p);
+            const theirs = content == null ? undefined : getRel(content, rel);
+            const changedByThem = !fl.base || serialize(theirs ?? null) !== serialize((fl.base && getRel(fl.base, rel)) ?? null);
             if (changedByThem && theirsWin) continue; // 双方都改了,听版本大的
             protect.add(p);
             if (serialize(theirs ?? null) !== serialize(ours ?? null)) keep.push(p);
         }
-        inflight = null;
+        inflight.delete(part);
     }
-    seeRev(data);
-    // 收到的就是存储里现在的内容:之后判断"没变就不写"要和它比,而不是和本页上次写的比。
-    // 不然本页写过 X、别的标签页改成 Y、本页再改回 X 时,会以为 X 已经在存储里而跳过写入
-    try { lastGmBody = serialize(data); } catch { lastGmBody = null; }
-    lastSiteBody = null;
+    const cur = partVer.get(part) || noVer;
+    if (cmpVer(ver, cur) > 0) partVer.set(part, ver);
+    const deleted = !!extra.deleted || (part !== META && content == null);
+    // 收到的就是存储里现在的内容:之后判断"没变就不写"要和它比
+    if (part === META) lastBody.set(META, serialize({ ...content, $parts: [...new Set(extra.parts || [])].sort() }));
+    else lastBody.set(part, deleted ? "$deleted" : serialize(content));
     const changedPaths = [];
+    const removed = (full, gone) => {
+        if (gone && typeof gone === "object" && !Array.isArray(gone) && Object.keys(gone).length) {
+            for (const k of Object.keys(gone)) removed(`${full}.${k}`, gone[k]);
+            return;
+        }
+        changedPaths.push(full);
+        emitChange(full, undefined);
+    };
     const walk = (target, src, path) => {
         for (const k of Object.keys(src)) {
+            if (path === "" && k === "plugins") continue;
             const full = path ? `${path}.${k}` : k;
             const a = target[k], b = src[k];
             if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) { walk(a, b, full); continue; }
@@ -536,20 +705,13 @@ export function applyRemote(data) {
             changedPaths.push(full);
             emitChange(full, b);
         }
-        // 别的标签页删掉的键:本地有、收到的没有、本地又没改过的,也删掉;不然本页下次保存会把它写回去。
-        // 顶层和 plugins.<名> 这两层只在收到的版本更新时才删(见上);plugins 本身不删
-        if (!newer && (path === "" || path === "plugins")) return;
+        // 别的标签页删掉的键:本地有、收到的没有、本地又没改过的,也删掉(这一份的版本更新,对方看到过本页知道的全部内容)
         for (const k of Object.keys(target)) {
             if (Object.prototype.hasOwnProperty.call(src, k)) continue;
             if (path === "" && k === "plugins") continue;
             const full = path ? `${path}.${k}` : k;
             if (under(protect, full)) continue;
             const parts = full.split(".");
-            // 整条插件设置被删:本页已注册的插件只重置为默认值(它正在用 settings.store),不删条目
-            if (parts.length === 2 && parts[0] === "plugins" && isRegisteredPlugin(k) && target[k] && typeof target[k] === "object" && !Array.isArray(target[k])) {
-                walk(target[k], {}, full);
-                continue;
-            }
             // 插件设置里缺的项是"等于默认值"(保存时不存默认值),不是删掉
             if (parts.length === 3 && parts[0] === "plugins") {
                 explicit.delete(full);
@@ -564,20 +726,29 @@ export function applyRemote(data) {
             }
             const gone = target[k];
             delete target[k];
-            if (parts.length === 2 && parts[0] === "plugins") markExplicit(full, undefined);
             removed(full, gone);
         }
     };
-    // 删掉的是一整个对象(例如整条插件设置)时逐个叶子发通知,按前缀 "plugins.<名>." 监听的也能收到
-    const removed = (full, gone) => {
-        if (gone && typeof gone === "object" && !Array.isArray(gone) && Object.keys(gone).length) {
-            for (const k of Object.keys(gone)) removed(`${full}.${k}`, gone[k]);
-            return;
+    if (part === META) walk(PlainSettings, content || {}, "");
+    else {
+        const full = `plugins.${part}`;
+        const plugins = PlainSettings.plugins;
+        if (deleted && !isRegisteredPlugin(part)) {
+            // 整条插件设置被删(墓碑):本页没注册这个插件的,条目也删
+            if (plugins[part] !== undefined && !under(protect, full)) {
+                const gone = plugins[part];
+                delete plugins[part];
+                markExplicit(full, undefined);
+                removed(full, gone);
+            }
+        } else {
+            // 本页已注册的插件被删了整条:只重置为默认值(它正在用 settings.store),不删条目
+            const target = plugins[part] && typeof plugins[part] === "object" && !Array.isArray(plugins[part]) ? plugins[part] : (plugins[part] = {});
+            const src = deleted ? {} : content;
+            if (src && typeof src === "object" && !Array.isArray(src)) walk(target, src, full);
+            else if (!under(protect, full) && JSON.stringify(plugins[part], replacer) !== JSON.stringify(src, replacer)) { plugins[part] = src; changedPaths.push(full); emitChange(full, src); }
         }
-        changedPaths.push(full);
-        emitChange(full, undefined);
-    };
-    walk(PlainSettings, data, "");
+    }
     if (changedPaths.length) {
         logger.debug(`已从其他标签页同步 ${changedPaths.length} 项设置`);
         dispatch(Events.SETTINGS_SYNC, { paths: changedPaths });
@@ -614,118 +785,294 @@ export function replaceAll(data) {
     return paths.length;
 }
 
-let syncInstalled = false;
-export function installCrossTabSync() {
-    if (syncInstalled) return;
-    syncInstalled = true;
-    if (GM.addListener) {
-        try {
-            GM.addListener(STORAGE_KEY, (_name, _old, value, remote) => {
-                if (!remote) return;
-                const data = parseStored(value);
-                if (data) applyRemote(data);
-            });
-        } catch (e) { logger.debug("监听脚本管理器存储失败", e); }
+
+// ---------- 同 origin 的协调:Web Locks 串行写入、BroadcastChannel 传内容、localStorage 镜像 ----------
+// 有值变化监听的管理器(TM / VM)靠监听同步;没有的(AdGuard)靠这里:写入在同一 origin 的锁里串行做,写完把新内容广播给别的标签页,
+// 再写一份同步可读的 localStorage 镜像(storage 事件也会通知别的标签页)。这些都是页面自己的接口,不依赖脚本管理器
+const CHANNEL = `uspp-settings:${SCRIPT_ID}`;
+let channel = null;
+const openWriters = new Map(); // 别的标签页:开始写、还没写完的(写入者 -> 开始时间)
+function getChannel() {
+    if (channel !== null) return channel || null;
+    channel = false;
+    try {
+        const BC = W.BroadcastChannel || (typeof BroadcastChannel !== "undefined" ? BroadcastChannel : null);
+        if (!BC) return null;
+        channel = new BC(CHANNEL);
+        channel.onmessage = e => onChannel(e.data);
+    } catch { channel = false; }
+    return channel || null;
+}
+function post(msg) { try { getChannel()?.postMessage({ ...msg, w: TAB_WRITER }); } catch { /* 忽略 */ } }
+function onChannel(m) {
+    if (!m || typeof m !== "object" || m.w === TAB_WRITER) return;
+    if (m.t === "begin") { openWriters.set(m.w, Date.now()); return; }
+    if (m.t !== "done") return;
+    openWriters.delete(m.w);
+    for (const x of Array.isArray(m.parts) ? m.parts : []) {
+        if (!x || typeof x.part !== "string" || !x.ver) continue;
+        let content;
+        try { content = x.body == null ? undefined : JSON.parse(x.body, reviver); } catch { continue; }
+        applyRemotePart(x.part, content, { rev: Number(x.ver.rev) || 0, writer: String(x.ver.writer || "") }, { parts: x.parts, deleted: !!x.deleted });
     }
-    if (useSiteStorage()) {
-        W.addEventListener("storage", e => {
-            if (e.key !== SITE_STORAGE_KEY || e.newValue == null) return;
-            const data = parseStored(e.newValue);
-            if (data) applyRemote(data);
-        });
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** 拿到锁后:上一个持锁的标签页如果还没把它写的内容广播到,最多等 300 ms */
+async function waitOpenWriters() {
+    const t0 = Date.now();
+    for (;;) {
+        const now = Date.now();
+        for (const [w, at] of openWriters) if (now - at > 1500) openWriters.delete(w);
+        if (!openWriters.size || now - t0 > 300) return;
+        await sleep(10);
+    }
+}
+const LOCK = `uspp-settings:${SCRIPT_ID}`;
+const lockManager = () => { try { return W.navigator?.locks?.request ? W.navigator.locks : null; } catch { return null; } };
+export const hasWriteLock = () => !!lockManager();
+/** 在同 origin 的锁里执行;没有 Web Locks 或 3 秒拿不到锁时直接执行(退回先读后合并再写 + 写后核对) */
+async function withLock(fn) {
+    const L = lockManager();
+    if (!L) return fn(false);
+    let granted = false;
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ac ? setTimeout(() => { if (!granted) ac.abort(); }, 3000) : 0;
+    try {
+        return await L.request(LOCK, ac ? { signal: ac.signal } : {}, async () => { granted = true; clearTimeout(timer); return fn(true); });
+    } catch (e) {
+        if (granted) throw e;
+        logger.debug("拿不到设置写入锁,直接写", e);
+        return fn(false);
+    } finally { clearTimeout(timer); }
+}
+
+/** localStorage 镜像:整份设置 + 各份版本 + 写之前 GM 里那份的版本(base)。只在有适配的站点上用 */
+const MIRROR = "$mirror";
+function readMirror() {
+    if (!useSiteStorage()) return null;
+    try {
+        const raw = (W.localStorage || localStorage).getItem(SITE_STORAGE_KEY);
+        if (!raw) return null;
+        const v = JSON.parse(raw, reviver);
+        const m = v && v[MIRROR];
+        if (!m || m.v !== FORMAT || typeof m.vers !== "object") return null;
+        const doc = { ...v };
+        for (const k of [...META_KEYS, MIRROR]) delete doc[k];
+        if (!doc.plugins || typeof doc.plugins !== "object") doc.plugins = {};
+        const ver = x => (Array.isArray(x) ? { rev: Number(x[0]) || 0, writer: String(x[1] || "") } : null);
+        const vers = new Map(Object.entries(m.vers).map(([k, x]) => [k, ver(x)]).filter(([, x]) => x));
+        const base = new Map(Object.entries(m.base || {}).map(([k, x]) => [k, ver(x)]).filter(([, x]) => x));
+        return { doc, vers, base, parts: Array.isArray(m.parts) ? m.parts : [] };
+    } catch { return null; }
+}
+function writeMirror(bases) {
+    if (!useSiteStorage()) return;
+    const vers = {}, base = {};
+    for (const [k, v] of partVer) vers[k] = [v.rev, v.writer];
+    for (const [k, v] of bases) base[k] = [v.rev, v.writer];
+    // 没写的份 base 等于自己的版本(不会被误当成"GM 丢了这次写入")
+    for (const k of Object.keys(vers)) if (!(k in base)) base[k] = vers[k];
+    try {
+        const doc = persistable();
+        const rev = Math.max(0, ...[...partVer.values()].map(v => v.rev));
+        (W.localStorage || localStorage).setItem(SITE_STORAGE_KEY, serialize({ ...doc, [SAVED_AT]: Date.now(), [REV]: rev, [WRITER]: TAB_WRITER, [MIRROR]: { v: FORMAT, vers, base, parts: sortedParts() } }));
+    } catch (e) { logger.debug("写入 localStorage 镜像失败", e); }
+}
+/** 镜像里比本页新的份合并进来(AdGuard 等没有值变化监听时,别的标签页的写入从这里、从广播到达) */
+function applyMirror(m) {
+    if (!m) return;
+    for (const [part, ver] of m.vers) {
+        if (cmpVer(ver, partVer.get(part) || noVer) <= 0) continue;
+        if (part === META) applyRemotePart(META, metaContentOf(m.doc), ver, { parts: m.parts });
+        else applyRemotePart(part, m.doc.plugins[part], ver, { deleted: m.doc.plugins[part] === undefined });
     }
 }
 
 // ---------- 写入 ----------
-// 存储里现在的内容(不含保存时间):本页写入后,以及收到别的标签页的写入后更新;没变就不写
-let lastGmBody = null, lastSiteBody = null;
-// 网站存储只是备份(卸载脚本清空 GM 存储后救回用):合并到 2 秒写一次,离开页面时补写
+// 网站存储(IndexedDB)只是备份(卸载脚本清空 GM 存储后救回用):合并到 2 秒写一次,离开页面时补写
 const SITE_BACKUP_DELAY = 2000;
-let siteTimer = 0, siteJson = null;
-/** localStorage 是同步写入,大块设置会卡主线程;只在管理器没有值变化监听、要靠它的 storage 事件做多标签页同步时才写 */
-const needLsSync = () => !GM.addListener;
+let siteTimer = 0, siteJson = null, lastSiteBody = null;
 
-/** 读 GM 存储里现在那份设置;读不到为 null。同步接口直接返回(离开页面时补存不多等一个微任务),异步接口(GM4 等)返回 Promise */
-function readStoredGm() {
-    if (!GM.get) return null;
+function setPart(part, value) {
+    const json = serialize(value);
     try {
-        const raw = GM.get(STORAGE_KEY);
-        if (raw && typeof raw.then === "function") return raw.then(parseStored, () => null);
-        return parseStored(raw);
-    } catch { return null; }
+        return GM.set(partKey(part), JSON.parse(json));
+    } catch {
+        return GM.set(partKey(part), json);
+    }
 }
 
-/** 写出后过一会儿再读一次存储:还是本页写的就确认;被同时写入的别的标签页盖掉了就按版本合并,必要时重写 */
+/** 这次要写的份:改动涉及的、要强制重写的、迁移时的全部;内容和存储里一样的不写 */
+function planWrites(wrote) {
+    const touched = new Set(forceParts);
+    if (migrate) { touched.add(META); for (const n of Object.keys(PlainSettings.plugins || {})) touched.add(n); }
+    for (const p of wrote) for (const part of partsOfPath(p)) touched.add(part);
+    const out = [];
+    // 插件份先写,元信息(带插件名单)最后写:别的标签页看到名单里的新插件时,它那份已经在了
+    const order = [...touched].filter(p => p !== META).concat(touched.has(META) ? [META] : []);
+    for (const part of order) {
+        const content = persistablePart(part);
+        // 从没存过、又是空的插件份不写(全是默认值)
+        if (part !== META && !knownParts.has(part) && (content === undefined || (content && typeof content === "object" && !Array.isArray(content) && !Object.keys(content).length))) continue;
+        if (part !== META && !knownParts.has(part)) { knownParts.add(part); watchPart(part); }
+        out.push({ part, content });
+    }
+    // 名单变了,元信息也要写
+    if (!touched.has(META) && bodyOf(META, persistablePart(META)) !== lastBody.get(META)) out.push({ part: META, content: persistablePart(META) });
+    // 要强制重写的(镜像补回、冲突后重申)照写:这时 lastBody 记的可能是镜像里的内容,不是 GM 里的
+    return out.filter(w => forceParts.has(w.part) || bodyOf(w.part, w.content) !== lastBody.get(w.part));
+}
+
+/** 写一份;返回写入用的 Promise(异步管理器)或 null。失败抛出 */
+function writeOne(w, wrote) {
+    const prev = partVer.get(w.part) || noVer;
+    const ver = { rev: prev.rev + 1, writer: TAB_WRITER };
+    const meta = { [REV]: ver.rev, [WRITER]: ver.writer };
+    let value;
+    if (w.part === META) value = { ...w.content, ...meta, [SAVED_AT]: Date.now(), $v: FORMAT, $parts: sortedParts() };
+    else if (w.content === undefined) value = { ...meta, $deleted: true };
+    else if (w.content && typeof w.content === "object" && !Array.isArray(w.content)) value = { ...w.content, ...meta };
+    else value = { $value: w.content, ...meta };
+    const r = setPart(w.part, value);
+    const base = w.part === META ? (() => { try { return JSON.parse(lastBody.get(META) || "null", reviver); } catch { return null; } })() : (() => { const b = lastBody.get(w.part); if (!b || b === "$deleted") return null; try { return JSON.parse(b, reviver); } catch { return null; } })();
+    const commit = () => {
+        partVer.set(w.part, ver);
+        lastBody.set(w.part, bodyOf(w.part, w.content));
+        forceParts.delete(w.part);
+        const mine = wrote.filter(p => partsOfPath(p).includes(w.part));
+        const stored = w.content === undefined ? undefined : JSON.parse(serialize({ v: w.content }), reviver).v;
+        inflight.set(w.part, { ver, base, paths: new Map(mine.map(p => [p, stored === undefined ? null : (getRel(stored, relOf(w.part, p)) ?? null)])) });
+        return { part: w.part, ver, prev };
+    };
+    return { r, commit };
+}
+
+/** 写后核对:过一会儿再读一次存储,被同时写入的别的标签页盖掉了就按版本合并,必要时重写 */
 function armVerify() {
     clearTimeout(verifyTimer);
     verifyTimer = setTimeout(async () => {
         verifyTimer = 0;
-        if (!inflight) return;
-        let stored = readStoredGm();
-        if (stored && typeof stored.then === "function") stored = await stored;
-        if (!inflight) return;
-        const v = verOf(stored);
-        if (!stored || (v.writer === TAB_WRITER && v.rev === inflight.ver.rev)) { inflight = null; reasserts = 0; return; }
-        applyRemote(stored);
-        if (inflight && v.rev > inflight.ver.rev) inflight = null;
+        for (const [part, fl] of [...inflight]) {
+            const r = await awaitMaybe(readPart(part));
+            if (inflight.get(part) !== fl) continue;
+            if (!r || (r.ver.writer === TAB_WRITER && r.ver.rev === fl.ver.rev)) { inflight.delete(part); continue; }
+            applyRemotePart(part, r.deleted ? undefined : r.content, r.ver, { parts: r.parts, deleted: r.deleted });
+            if (inflight.get(part) === fl && r.ver.rev > fl.ver.rev) inflight.delete(part);
+        }
+        if (!inflight.size) reasserts = 0;
     }, VERIFY_MS);
 }
 
+/** 存储里的值比本页新的份先合并进来(锁里、写之前):镜像(同步、同 origin 最新)和 GM */
+async function refreshFromStores() {
+    applyMirror(readMirror());
+    if (!GM.get) return;
+    for (const part of [META, ...knownParts]) {
+        const r = await awaitMaybe(readPart(part));
+        if (r && cmpVer(r.ver, partVer.get(part) || noVer) > 0) applyRemotePart(part, r.deleted ? undefined : r.content, r.ver, { parts: r.parts, deleted: r.deleted });
+    }
+}
+
+function noteSiteBackup() {
+    if (!useSiteStorage()) return;
+    let body;
+    try { body = serialize(persistable()); } catch { return; }
+    if (body === lastSiteBody) return;
+    const rev = Math.max(0, ...[...partVer.values()].map(v => v.rev));
+    siteJson = { body, json: serialize({ ...persistable(), [SAVED_AT]: Date.now(), [REV]: rev, [WRITER]: TAB_WRITER }) };
+}
+
+let pendingSave = false;
+let saving = null, saveAgain = false, flushWanted = false;
+
 /**
- * 写入:先读后合并再写。GM 没有原子的比较并交换,这里尽量逼近:写之前读一次存储,别的标签页写过更新的版本就先合并进来
- * (本页没落盘的改动不被盖掉),再以 rev + 1 写出;写出后核对一次(见 armVerify)。写入失败时改动留着,下次重试
+ * 写入。一次只跑一个(同一页里不会写出两份版本相同、内容不同的设置),跑的时候又要求保存就在这次结束后再跑一次。
+ * 有 Web Locks 时在同 origin 的锁里做:先把别的标签页刚写的合并进来,再按份写出变了的,最后广播、写镜像;
+ * 写入失败的改动留着,下次重试
  */
-export async function saveNow({ flushBackup = false } = {}) {
+export function saveNow({ flushBackup = false } = {}) {
+    if (flushBackup) flushWanted = true;
+    if (saving) { saveAgain = true; return saving; }
+    saving = (async () => {
+        try {
+            do {
+                saveAgain = false;
+                await saveOnce();
+            } while (saveAgain);
+            if (flushWanted) { flushWanted = false; await flushSiteBackup(); }
+        } finally { saving = null; }
+    })();
+    return saving;
+}
+
+async function saveOnce() {
     if (!ready) return;
     if (!PlainSettings.plugins || Object.keys(PlainSettings.plugins).length === 0) return;
-    let stored = null, haveStored = false;
-    if (GM.get) {
-        stored = readStoredGm();
-        if (stored && typeof stored.then === "function") stored = await stored;
-        haveStored = true;
-        if (stored && cmpVer(verOf(stored), known) > 0) applyRemote(stored);
-    }
-    let body, toStore;
-    try { toStore = persistable(); body = serialize(toStore); } catch (e) { logger.warn("设置序列化失败", e); return; }
-    writeBootSnapshot();
+    pendingSave = false;
+    await withLock(async locked => {
+        if (locked) { post({ t: "begin" }); await waitOpenWriters(); }
+        try {
+            await refreshFromStores();
+            writeBootSnapshot();
+            const wrote = [...dirty];
+            dirty.clear();
+            let plan;
+            try { plan = planWrites(wrote); } catch (e) { logger.warn("设置序列化失败", e); for (const p of wrote) dirty.add(p); return; }
+            const done = [], bases = new Map();
+            if (GM.set) {
+                for (const w of plan) {
+                    let job;
+                    try { job = writeOne(w, wrote); if (job.r && typeof job.r.then === "function") await job.r; } catch (e) {
+                        // 没写进去:改动留着下次重试
+                        logger.warn("写入设置失败", e);
+                        for (const p of wrote) if (partsOfPath(p).includes(w.part)) dirty.add(p);
+                        pendingSave = true;
+                        continue;
+                    }
+                    const c = job.commit();
+                    bases.set(c.part, c.prev);
+                    done.push(c);
+                }
+            }
+            if (done.length) {
+                migrate = false;
+                writeMirror(bases);
+                post({ t: "done", parts: done.map(c => { const content = persistablePart(c.part); return { part: c.part, ver: c.ver, body: content === undefined ? null : serialize(content), deleted: c.part !== META && content === undefined, parts: c.part === META ? sortedParts() : undefined }; }) });
+                armVerify();
+            } else if (locked) post({ t: "done", parts: [] });
+            noteSiteBackup();
+        } catch (e) {
+            if (locked) post({ t: "done", parts: [] });
+            throw e;
+        }
+    });
+    if (siteJson && !siteTimer) siteTimer = setTimeout(() => { flushSiteBackup(); }, SITE_BACKUP_DELAY);
+}
+
+/** 离开页面时:同步写出(不等锁、不等读取;异步管理器的写入也不等它完成),镜像同步写一份,下次启动时 GM 没落盘的能从镜像救回 */
+function flushSync() {
+    if (!ready || !GM.set) return;
     const wrote = [...dirty];
     dirty.clear();
     pendingSave = false;
-    const storedBody = stored ? serialize(stored) : null;
-    // 存储里已经是这份内容就不写(和存储比,不和本页上次写的比:别的标签页可能改过又改回)
-    const same = haveStored ? body === storedBody : body === lastGmBody;
-    const writeGm = !!GM.set && !same;
-    let ver = known;
-    if (writeGm) {
-        ver = { rev: known.rev + 1, writer: TAB_WRITER };
-        const json = serialize({ ...toStore, [SAVED_AT]: Date.now(), [REV]: ver.rev, [WRITER]: ver.writer });
+    let plan;
+    try { plan = planWrites(wrote); } catch { return; }
+    const bases = new Map(), done = [];
+    for (const w of plan) {
         try {
-            try {
-                const r = GM.set(STORAGE_KEY, JSON.parse(json));
-                if (r && typeof r.then === "function") await r;
-            } catch {
-                const r = GM.set(STORAGE_KEY, json);
-                if (r && typeof r.then === "function") await r;
-            }
-        } catch (e) {
-            // 没写进去:改动留着下次重试;站点备份也不写,免得备份领先 GM
-            logger.warn("写入设置失败", e);
-            for (const p of wrote) dirty.add(p);
-            pendingSave = true;
-            return;
-        }
-        lastGmBody = body;
-        if (cmpVer(ver, known) > 0) known = ver;
-        inflight = { ver, base: stored, paths: new Map(wrote.map(p => [p, JSON.parse(serialize({ v: getPath(toStore, p) ?? null }), reviver).v])) };
-        armVerify();
-        if (useSiteStorage() && body !== lastSiteBody) siteJson = { body, json };
-    } else if (useSiteStorage() && body !== lastSiteBody) {
-        // GM 里已经是这份:站点备份跟上,版本照抄 GM 的,不自己加一
-        siteJson = { body, json: serialize({ ...toStore, [SAVED_AT]: savedAtOf(stored) || Date.now(), [REV]: ver.rev, [WRITER]: ver.writer }) };
+            const job = writeOne(w, wrote);
+            if (job.r && typeof job.r.then === "function") job.r.catch(() => { });
+            const c = job.commit();
+            bases.set(c.part, c.prev);
+            done.push(c);
+        } catch (e) { logger.warn("写入设置失败", e); }
     }
-    if (!siteJson) { if (flushBackup) await flushSiteBackup(); return; }
-    if (flushBackup) await flushSiteBackup();
-    else if (!siteTimer) siteTimer = setTimeout(() => { flushSiteBackup(); }, needLsSync() ? 0 : SITE_BACKUP_DELAY);
+    if (done.length) {
+        writeMirror(bases);
+        post({ t: "done", parts: done.map(c => { const content = persistablePart(c.part); return { part: c.part, ver: c.ver, body: content === undefined ? null : serialize(content), deleted: c.part !== META && content === undefined, parts: c.part === META ? sortedParts() : undefined }; }) });
+    }
+    noteSiteBackup();
+    flushSiteBackup();
 }
 
 async function flushSiteBackup() {
@@ -734,27 +1081,54 @@ async function flushSiteBackup() {
     const pending = siteJson;
     siteJson = null;
     if (!pending) return;
-    const ls = W.localStorage || localStorage;
-    if (needLsSync()) {
-        try { ls.setItem(SITE_STORAGE_KEY, pending.json); } catch (e) { logger.debug("写入 localStorage 备份失败", e); }
-    } else {
-        // 旧版本写过的 localStorage 副本删掉,免得以后读到过时的一份
-        try { if (ls.getItem(SITE_STORAGE_KEY) != null) ls.removeItem(SITE_STORAGE_KEY); } catch { /* 忽略 */ }
-    }
     try { await idbSet(SITE_STORAGE_KEY, pending.json); lastSiteBody = pending.body; } catch (e) { logger.debug("写入 IndexedDB 备份失败", e); }
 }
 
-let pendingSave = false;
 const debouncedSave = debounce(() => { saveNow(); }, 100);
 const scheduleSave = Object.assign(() => { pendingSave = true; debouncedSave(); }, { cancel: () => debouncedSave.cancel() });
 
 /** 离开页面时补存;pagehide 覆盖往返缓存和移动端切走,和 beforeunload 一起只写一次 */
 export function installUnloadSave() {
     const flush = () => {
-        if (!pendingSave && !siteJson) return;
+        if (!pendingSave && !siteJson && !dirty.size) return;
         scheduleSave.cancel();
-        saveNow({ flushBackup: true });
+        flushSync();
     };
     W.addEventListener("beforeunload", flush);
     W.addEventListener("pagehide", flush);
 }
+
+// ---------- 监听别的标签页 ----------
+const watched = new Set();
+function watchPart(part) {
+    if (!syncInstalled || !GM.addListener || watched.has(part)) return;
+    watched.add(part);
+    try {
+        GM.addListener(partKey(part), (_name, _old, value, remote) => {
+            if (!remote) return;
+            const r = parsePart(value);
+            if (!r) return;
+            applyRemotePart(part, r.deleted ? undefined : r.content, r.ver, { parts: r.parts, deleted: r.deleted });
+        });
+    } catch (e) { logger.debug("监听脚本管理器存储失败", e); }
+}
+/** 刚知道的份(别的标签页新加的插件,或安装监听之前的空档):同步读一次 */
+function catchUpPart(part) {
+    const r = readPart(part);
+    if (!r || typeof r.then === "function") { if (r) r.then(x => { if (x && cmpVer(x.ver, partVer.get(part) || noVer) > 0) applyRemotePart(part, x.deleted ? undefined : x.content, x.ver, { parts: x.parts, deleted: x.deleted }); }); return; }
+    if (cmpVer(r.ver, partVer.get(part) || noVer) > 0) applyRemotePart(part, r.deleted ? undefined : r.content, r.ver, { parts: r.parts, deleted: r.deleted });
+}
+let syncInstalled = false;
+export function installCrossTabSync() {
+    if (syncInstalled) return;
+    syncInstalled = true;
+    getChannel();
+    for (const part of [META, ...knownParts]) { watchPart(part); catchUpPart(part); }
+    if (useSiteStorage()) {
+        W.addEventListener("storage", e => {
+            if (e.key !== SITE_STORAGE_KEY || e.newValue == null) return;
+            applyMirror(readMirror());
+        });
+    }
+}
+

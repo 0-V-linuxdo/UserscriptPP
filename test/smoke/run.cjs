@@ -292,20 +292,39 @@ const req = id => root.r(id);
     out.menus = menus.map(m => m.name);
     // 多标签页:别的标签页保存的设置合并进来;本页未落盘的改动不被覆盖
     P.Settings.plugins.Settings.sites.grok.zapMe = "x";
+    // 存储按份:UserscriptPPSettings:meta(顶层)+ UserscriptPPSettings:p:<插件名>(每个插件一份),各带 $rev / $writer
+    const SKM = "UserscriptPPSettings:meta", SKP = "UserscriptPPSettings:p:";
+    const val = k => { const v = store.get(k); return typeof v === "string" ? JSON.parse(v) : v; };
+    const strip = v => { if (!v) return v; const o = { ...v }; for (const k of ["$rev", "$writer", "$savedAt", "$parts", "$v", "$deleted"]) delete o[k]; return o; };
+    const partRev = name => val(name === "$meta" ? SKM : SKP + name)?.$rev ?? 0;
+    const readDoc = () => {
+        const m = val(SKM);
+        if (!m) return null;
+        const doc = { ...strip(m), plugins: {} };
+        for (const n of m.$parts || []) { const pv = val(SKP + n); if (pv && !pv.$deleted) doc.plugins[n] = strip(pv); }
+        return doc;
+    };
+    /** 模拟别的标签页写了一份:写进存储并发值变化通知(remote=true) */
+    const remotePart = (name, content, rev) => {
+        const key = name === "$meta" ? SKM : SKP + name;
+        const value = content === null ? { $deleted: true, $rev: rev, $writer: "zzzzother" } : { ...content, $rev: rev, $writer: "zzzzother" };
+        if (name === "$meta") value.$parts = val(SKM)?.$parts || [];
+        store.set(key, value);
+        valueListeners.filter(l => l.k === key).forEach(l => l.fn(key, null, value, true));
+    };
     await sleep(300);
-    const remote = JSON.parse(JSON.stringify(P.PlainSettings));
-    remote.plugins.Settings.pinnedPlugins = ["RemotePin"];
-    remote.plugins.Settings.sites.grok.customCSS = "remote{}";
-    // 别的标签页删了一个键(要跟着删);整份插件条目缺了(不删,可能是没装这个插件的旧版本)
-    delete remote.plugins.Settings.sites.grok.zapMe;
-    delete remote.plugins.GrokMessages;
+    const remote = JSON.parse(JSON.stringify(P.PlainSettings.plugins.Settings));
+    remote.pinnedPlugins = ["RemotePin"];
+    remote.sites.grok.customCSS = "remote{}";
+    // 别的标签页删了一个键(要跟着删);没写的插件份(GrokMessages)不动
+    delete remote.sites.grok.zapMe;
     P.setQuickCss({ css: "local{}" });
     P.Settings.plugins.Settings.sites.grok.keepMe = 1; // 本页刚加、还没落盘:不被删
     const deletions = [];
     P.SettingsStore.addPrefixChangeListener("plugins.Settings.sites.grok.zapMe", v => deletions.push(v === undefined ? "deleted" : v));
     const seen = [];
     P.SettingsStore.addPrefixChangeListener("plugins.Settings.pinnedPlugins", v => seen.push(v));
-    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, remote, true));
+    remotePart("Settings", remote, partRev("Settings") + 1);
     out.crossTab = { pinned: P.PlainSettings.plugins.Settings.pinnedPlugins, css: P.getQuickCss().css, notified: seen.length };
     const g = P.PlainSettings.plugins.Settings.sites.grok;
     out.crossTabDelete = { deleted: !("zapMe" in g), notified: deletions, keptDirty: g.keepMe, pluginKept: "GrokMessages" in P.PlainSettings.plugins };
@@ -313,40 +332,37 @@ const req = id => root.r(id);
     await sleep(300);
     P.Settings.plugins.Settings.sites.grok.toggleProbe = "on";
     await sleep(300);
-    const stored = () => { const v = store.get("UserscriptPPSettings"); return (typeof v === "string" ? JSON.parse(v) : v)?.plugins?.Settings?.sites?.grok?.toggleProbe; };
+    const stored = () => readDoc()?.plugins?.Settings?.sites?.grok?.toggleProbe;
     const toggleBefore = stored();
-    const other = JSON.parse(JSON.stringify(store.get("UserscriptPPSettings")));
-    other.plugins.Settings.sites.grok.toggleProbe = "off";
-    store.set("UserscriptPPSettings", other);
-    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, other, true));
+    const other = JSON.parse(JSON.stringify(readDoc().plugins.Settings));
+    other.sites.grok.toggleProbe = "off";
+    remotePart("Settings", other, partRev("Settings") + 1);
     const toggleSynced = P.PlainSettings.plugins.Settings.sites.grok.toggleProbe;
     P.Settings.plugins.Settings.sites.grok.toggleProbe = "on";
     await sleep(300);
     out.toggleBack = { before: toggleBefore, synced: toggleSynced, after: stored() };
-    // 版本号:每次保存加一;版本号更大的一份可以删掉整条插件设置,过时的一份(版本号更小)不用
+    // 版本号(按份):每次保存这一份加一;版本号更大的墓碑能删掉整条插件设置,过时的一份(版本号更小)不用
     P.Settings.plugins.RevProbe = { color: "red" };
     await sleep(300);
-    const raw = () => { const v = store.get("UserscriptPPSettings"); return typeof v === "string" ? JSON.parse(v) : v; };
-    const rev1 = raw().$rev;
+    const rev1 = partRev("RevProbe");
     P.Settings.plugins.RevProbe.size = 2;
     await sleep(300);
-    const rev2 = raw().$rev;
-    const stale = JSON.parse(JSON.stringify(raw()));
-    stale.$rev = rev2 - 1;
-    stale.plugins.Settings.sites.grok.toggleProbe = "stale";
-    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, stale, true));
+    const rev2 = partRev("RevProbe");
+    const stale = JSON.parse(JSON.stringify(readDoc().plugins.Settings));
+    stale.sites.grok.toggleProbe = "stale";
+    const settingsRev = partRev("Settings");
+    remotePart("Settings", stale, settingsRev - 1);
     const staleIgnored = P.PlainSettings.plugins.Settings.sites.grok.toggleProbe === "on";
-    const newer = JSON.parse(JSON.stringify(raw()));
-    newer.$rev = rev2 + 1;
-    delete newer.plugins.RevProbe;
     const revDeleted = [];
     P.SettingsStore.addPrefixChangeListener("plugins.RevProbe.", (v, path) => revDeleted.push(`${path}=${v}`));
-    store.set("UserscriptPPSettings", newer);
-    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, newer, true));
+    remotePart("RevProbe", null, rev2 + 1);
     const entryGone = !("RevProbe" in P.PlainSettings.plugins);
+    // 存储里真是旧的那份:过一会儿确认后重写(不立即重写,值变化通知可能还在路上)
+    await sleep(800);
+    const settingsRevBefore = partRev("Settings");
     P.Settings.plugins.Settings.sites.grok.toggleProbe = "after-rev";
     await sleep(300);
-    out.rev = { increments: rev2 === rev1 + 1, staleIgnored, entryGone, notified: revDeleted.sort(), next: raw().$rev - rev2, notWrittenBack: !("RevProbe" in raw().plugins) };
+    out.rev = { increments: rev2 === rev1 + 1, staleIgnored, entryGone, notified: revDeleted.sort(), next: partRev("Settings") - settingsRevBefore, notWrittenBack: !("RevProbe" in (readDoc().plugins || {})) };
     // 默认值不落盘:和默认值相同的项不存;对象默认值被就地改动不会改到定义;别的标签页缺的项按默认值处理
     const listDefault = ["a"];
     P.registerPlugin(P.definePlugin({ name: "DefaultProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ mode: { type: P.OptionType.STRING, default: "auto" }, list: { type: P.OptionType.CUSTOM, default: listDefault } }) }));
@@ -354,21 +370,19 @@ const req = id => root.r(id);
     dp.mode = "dark";
     dp.list.push("b");
     await sleep(300);
-    const storedDp1 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
+    const storedDp1 = JSON.parse(JSON.stringify(readDoc().plugins.DefaultProbe || {}));
     dp.mode = "auto";
     await sleep(300);
-    const storedDp2 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
+    const storedDp2 = JSON.parse(JSON.stringify(readDoc().plugins.DefaultProbe || {}));
     // 重置(删掉这一项):回到"没设置过",不存,以后跟着默认值变
     delete dp.mode;
     await sleep(300);
-    const storedDp3 = JSON.parse(JSON.stringify(raw().plugins.DefaultProbe || {}));
-    const fromOther = JSON.parse(JSON.stringify(raw()));
-    fromOther.$rev = raw().$rev + 1;
-    delete fromOther.plugins.DefaultProbe.list;
+    const storedDp3 = JSON.parse(JSON.stringify(readDoc().plugins.DefaultProbe || {}));
+    const fromOther = JSON.parse(JSON.stringify(readDoc().plugins.DefaultProbe));
+    delete fromOther.list;
     const dpSeen = [];
     P.SettingsStore.addPrefixChangeListener("plugins.DefaultProbe.", (v, path) => dpSeen.push(`${path}=${JSON.stringify(v)}`));
-    store.set("UserscriptPPSettings", fromOther);
-    valueListeners.filter(l => l.k === "UserscriptPPSettings").forEach(l => l.fn("UserscriptPPSettings", null, fromOther, true));
+    remotePart("DefaultProbe", fromOther, partRev("DefaultProbe") + 1);
     out.defaults = { first: storedDp1, second: storedDp2, reset: storedDp3, readMode: dp.mode, definitionUntouched: listDefault.length === 1, remoteList: P.PlainSettings.plugins.DefaultProbe.list, notified: dpSeen };
     // 备份:敏感设置默认不导出,导入时文件里为空则保留本机的
     P.registerPlugin(P.definePlugin({ name: "SecretProbe", description: "x", authors: ["t"], settings: P.definePluginSettings({ token: { type: P.OptionType.STRING, default: "", sensitive: true }, color: { type: P.OptionType.STRING, default: "" } }) }));

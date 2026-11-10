@@ -2,7 +2,7 @@
 import { VERSION, GM } from "../env.js";
 import { Logger } from "./logger.js";
 import { PlainSettings, serialize, parseStored, saveNow, replaceAll } from "./settings.js";
-import { plugins, isPluginEnabled, reconcile, needsRestart, sensitiveKeys, OptionType } from "./plugins.js";
+import { plugins, isPluginEnabled, reconcile, pendingReload, checkReload, sensitiveKeys, OptionType } from "./plugins.js";
 import { dispatch, Events } from "./events.js";
 import { exportData, importData } from "./datastore.js";
 
@@ -153,21 +153,20 @@ export async function lastImport() {
 /** 把设置换成 data,并按新设置启停插件;返回 true 表示需要刷新 */
 async function apply(data, pluginData) {
     const before = Object.fromEntries(Object.keys(plugins).map(n => [n, isPluginEnabled(n)]));
+    const reloadBefore = new Set(pendingReload);
     for (const name of Object.keys(plugins)) data.plugins[name] ??= {};
     replaceAll(data);
-    let reload = false;
     for (const [name, was] of Object.entries(before)) {
-        const p = plugins[name];
         const now = isPluginEnabled(name);
-        if (was === now) continue;
-        if (needsRestart(p)) reload = true;
-        dispatch(Events.PLUGIN_TOGGLE, { name, enabled: now });
+        if (was !== now) dispatch(Events.PLUGIN_TOGGLE, { name, enabled: now });
     }
     // 开关的变更在 replaceAll 发通知时已经收敛过;这里再收敛一次,兜住只改了依赖关系、没改开关的情况
     try { reconcile(); } catch (e) { logger.error("导入后启停插件失败", e); }
+    // 要不要刷新只看 pendingReload(和页面加载时的配置比较),不另外判断
+    try { checkReload(); } catch (e) { logger.error("重算要刷新的插件出错", e); }
+    const reload = [...pendingReload].some(n => !reloadBefore.has(n));
     await saveNow({ flushBackup: true });
     if (pluginData) { try { await importData(pluginData); } catch (e) { logger.error("导入插件数据失败", e); } }
-    if (reload) dispatch(Events.RELOAD_NEEDED, { reason: "import" });
     return reload;
 }
 

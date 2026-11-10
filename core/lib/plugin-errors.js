@@ -49,7 +49,9 @@ export function guard(plugin, where, fn, rethrow = false, live = null) {
         let r;
         try { r = fn.apply(this, a); } catch (e) { reportPluginError(plugin, where, e); if (rethrow) throw e; return undefined; }
         if (r && typeof r.then === "function") {
-            return rethrow ? r.then(undefined, e => { reportPluginError(plugin, where, e); throw e; }) : r.then(undefined, e => reportPluginError(plugin, where, e));
+            // 迟到的拒绝:插件这一次运行已经结束(停了又启动是新的一次)就不再记到它头上,免得把重启后的插件熔断掉
+            const report = e => { if (!live || live()) reportPluginError(plugin, where, e); };
+            return rethrow ? r.then(undefined, e => { report(e); throw e; }) : r.then(undefined, report);
         }
         return r;
     };

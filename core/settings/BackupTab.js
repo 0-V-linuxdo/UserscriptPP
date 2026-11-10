@@ -3,6 +3,7 @@ import { SCRIPT_NAME } from "../env.js";
 import { h, useState, useEffect } from "../ui/react.js";
 import { Button, Row, Switch } from "../ui/components.js";
 import { confirmDialog } from "../ui/modal.js";
+import { pendingReload } from "../lib/plugins.js";
 import { showToast, ToastType, showNotice } from "../ui/toast.js";
 import { exportSettings, exportSettingsWithData, parseBackup, importSettings, previewImport, lastImportInvalid, undoImport, lastImport, downloadJson, backupFilename, pickJsonFile } from "../lib/backup.js";
 
@@ -10,11 +11,13 @@ const list = names => names.length > 6 ? `${names.slice(0, 6).join(", ")} and ${
 const invalidText = inv => inv.map(x => x.key === "*" ? x.plugin : `${x.plugin}.${x.key} (${x.reason})`);
 
 /** 撤销上一次导入;返回是否撤销了 */
+const reloadList = () => [...pendingReload].join(", ") || "Some plugins";
+
 export async function runUndoImport() {
     const reload = await undoImport();
     if (reload === null) { showToast("There is no import to undo.", ToastType.INFO); return false; }
     showToast("Import undone. Your previous settings are back.", ToastType.SUCCESS);
-    if (reload && await confirmDialog({ title: "Reload required", body: "Some restored plugin changes need a page reload.", confirmText: "Reload", cancelText: "Later" })) location.reload();
+    if (reload && await confirmDialog({ title: "Reload required", body: `${reloadList()} ${pendingReload.size === 1 ? "needs" : "need"} a page reload to apply the restored settings.`, confirmText: "Reload", cancelText: "Later" })) location.reload();
     return true;
 }
 
@@ -44,7 +47,7 @@ export async function runImport() {
         type: "SUCCESS", duration: 20000,
         action: { label: "Undo", onClick: () => { runUndoImport(); } },
     });
-    if (reload && await confirmDialog({ title: "Reload required", body: "Some imported plugin changes need a page reload.", confirmText: "Reload", cancelText: "Later" })) location.reload();
+    if (reload && await confirmDialog({ title: "Reload required", body: `${reloadList()} ${pendingReload.size === 1 ? "needs" : "need"} a page reload to apply the imported settings.`, confirmText: "Reload", cancelText: "Later" })) location.reload();
     return true;
 }
 

@@ -77,7 +77,7 @@ for (const [order, late] of [["first"], ["foreignFirst"], ["foreignAfter"], ["fo
         assert.deepEqual(data.crossTabDelete, { deleted: true, notified: ["deleted"], keptDirty: 1, pluginKept: true });
         assert.deepEqual(data.toggleBack, { before: "on", synced: "off", after: "on" }, "别的标签页改过之后,本页改回原值也要写进存储");
         assert.deepEqual(data.defaults, { first: { mode: "dark", list: ["a", "b"] }, second: { mode: "auto", list: ["a", "b"] }, reset: { list: ["a", "b"] }, readMode: "auto", definitionUntouched: true, remoteList: ["a"], notified: ['plugins.DefaultProbe.list=["a"]'] }, "默认值不落盘:明确设成默认值的照存,重置后不存,缺的项按默认值处理,定义里的默认值不被改");
-        assert.deepEqual(data.rev, { increments: true, staleIgnored: true, entryGone: true, notified: ["plugins.RevProbe.color=undefined", "plugins.RevProbe.size=undefined"], next: 2, notWrittenBack: true }, "版本号:过时的一份不用,更新的一份能删掉整条插件设置,下次保存接着加一");
+        assert.deepEqual(data.rev, { increments: true, staleIgnored: true, entryGone: true, notified: ["plugins.RevProbe.color=undefined", "plugins.RevProbe.size=undefined"], next: 1, notWrittenBack: true }, "版本号(按份):过时的一份不用,更新的墓碑能删掉整条插件设置,下次保存这一份接着加一");
         assert.deepEqual(data.backup, { exportedToken: false, token: "s3cret", color: "blue", format: "userscript-pp-settings" });
         assert.equal(data.writable, true);
         assert.deepEqual(data.bridge, { keys: ["plugins", "scriptId", "site", "version"], noApi: [], selfMethod: "function", selfStable: true, selfHidden: ["undefined", "undefined", "undefined"], hostSelf: "function", frozen: true });
@@ -371,11 +371,13 @@ test("渲染型注入点、菜单补丁、拦截器、命令和快捷键、搜�
     });
     // 运行期错误:ctx 的监听、定时器(含 async)、async start() 和 ctx.reportError 都记到插件名下;出错太多本页停掉并提示
     assert.deepEqual(data.runtimeErrors, {
-        before: { count: 3, tripped: false },
-        // 第 10 次出错时停掉,监听随之撤掉,之后的事件不再计数
-        after: { count: 10, tripped: true, where: "listen:flaky-ev" },
-        started: false, startError: null, notice: true, badge: "Turned off after 10 errors", diag: true,
+        before: { count: 2, tripped: false },
+        // 启动完成时熔断窗口清零(启动期间的错误不算):之后窗口里第 10 次出错时停掉(总数 11 = 启动期间 1 次 + 定时器 1 次 + 监听 9 次),
+        // 监听随之撤掉,之后的事件不再计数
+        after: { count: 11, tripped: true, where: "listen:flaky-ev" },
+        started: false, startError: null, notice: true, badge: "Turned off after 11 errors", diag: true,
     });
+    assert.deepEqual(data.lateFail, { final: "failed", phase: "failed", started: false, error: "late start boom", reason: "startRejected", stopped: 1, runtime: 0 });
     // 开关与实际运行:熔断后点开关是重新启动;依赖跟着推导、不写进设置;别处改开关本页跟着启停;依赖被熔断时依赖方也停;启动失败调用 stop
     assert.deepEqual(data.lifecycle, {
         tripped: { phase: "tripped", restarted: true, intent: true },
@@ -748,8 +750,8 @@ test("同一页面两条基于框架的站点脚本互不影响", () => {
     assert.deepEqual(data.fetch, { hits: ["A:/api/x", "B:/api/x"], foreign: ["/api/x"], page: ["/api/x"], untouched: true });
     assert.deepEqual(data.route, { routes: ["A:/uspp-example/next", "B:/uspp-example/next"], foreign: true, pageKept: true });
     // 设置、存储键、样式、菜单、界面根元素各自独立
-    // 管理器有值变化监听时,网站存储的备份只写 IndexedDB(异步),不写同步的 localStorage
-    assert.deepEqual(data.settings, { aStarred: ["onlyA"], bStarred: [], bQuickCss: "", gmA: ["UserscriptPPBoot", "UserscriptPPSettings"], gmB: ["UserscriptPPBoot", "UserscriptPPSettings"], ls: [] });
+    // 设置按份存(元信息 + 每个插件一份);同 origin 的 localStorage 镜像(锁里合并用)按脚本分开
+    assert.deepEqual(data.settings, { aStarred: ["onlyA"], bStarred: [], bQuickCss: "", gmA: ["UserscriptPPSettings:meta", "UserscriptPPSettings:p:Settings"], gmB: ["UserscriptPPSettings:meta", "UserscriptPPSettings:p:Settings"], ls: ["UserscriptPP:alpha:settings", "UserscriptPP:beta:settings"] });
     assert.equal(data.styles.bHasA, false);
     assert.deepEqual(data.menus, { a: ["Script alpha settings", "Script alpha: search…", "Script alpha: reload in safe mode", "Example: say hello"], b: ["Script beta settings", "Script beta: search…", "Script beta: reload in safe mode", "Example: say hello"] });
     assert.ok(data.ui.roots.every(t => /^uspp-(alpha|beta)-/.test(t)), data.ui.roots.join(","));
@@ -1022,9 +1024,25 @@ test("多标签页同时保存:不丢改动,同一项冲突时所有标签页收
         const both = { probeA: "a", probeB: "b" };
         assert.deepEqual({ stored: c.data.stored, A: c.data.A, B: c.data.B }, { stored: both, A: both, B: both }, JSON.stringify(env));
     }
-    const k = runTabs("conflict");
-    assert.equal(k.errors, "none");
-    assert.equal(k.data.converged, true, JSON.stringify(k.data.values));
+});
+
+test("4 个标签页同时改设置:各改各的插件、同一插件的不同项、同一个数组,都不丢且收敛(有监听 / AdGuard / AdGuard 只读注入时快照 / 没有 Web Locks)", () => {
+    for (const env of [{}, { NOLOCKS: "1" }, { PROFILE: "adguard" }, { PROFILE: "adguard-snapshot" }, { PROFILE: "adguard-snapshot", NOLOCKS: "1" }]) {
+        const { data, errors } = runTabs("four", env);
+        assert.equal(errors, "none", JSON.stringify(env));
+        assert.deepEqual(data.four.stored.probes, [0, 1, 2, 3], JSON.stringify(env));
+        assert.deepEqual(data.four.stored.own, [0, 1, 2, 3], JSON.stringify(env));
+        assert.equal(data.four.same, true, JSON.stringify(env));
+        assert.equal(data.four.quiet, true, "收敛后不应再反复写入 " + JSON.stringify(env));
+    }
+});
+
+test("AdGuard:关页面时 GM 写入丢了,下次启动从同 origin 镜像快进并补写回 GM;镜像不是接着 GM 当前版本写的就不用", () => {
+    for (const env of [{ PROFILE: "adguard" }, { PROFILE: "adguard-snapshot" }]) {
+        const { data, errors } = runTabs("pagehide", env);
+        assert.equal(errors, "none", JSON.stringify(env));
+        assert.deepEqual(data.pagehide, { ff: { mirrored: "second", seen: "second", rewritten: "second" }, stale: { seen: "second", stored: "second" } }, JSON.stringify(env));
+    }
 });
 
 test("别的标签页删掉整条插件设置:本页已注册的插件重置为默认值,不删条目", () => {
@@ -1055,6 +1073,71 @@ test("只经收敛启停:依赖失败时依赖方为 blocked 且不反复重试,
         slow: { early: "starting", final: "running" },
         autoOn: "running",
     });
+});
+
+test("安全模式按标签页计数:同时打开 4 个标签页都正常启动,旧的共用记录被删掉(有 / 没有值变化监听)", () => {
+    for (const env of [{}, { PROFILE: "adguard" }]) {
+        const { data, errors } = runTabs("safemode", env);
+        assert.equal(errors, "none");
+        assert.deepEqual({ safe: data.safe, legacyKey: data.legacyKey }, { safe: [false, false, false, false], legacyKey: false }, JSON.stringify(env));
+    }
+});
+
+test("补测的边界:注入点同 id 替换、阶段原因、热替换失败的插件、start / stop 里的重入", () => {
+    const { data, errors } = runTabs("gaps");
+    assert.equal(errors, "none");
+    assert.deepEqual(data.gaps, {
+        slot: { afterStart: ["b"], afterStaleRemove: ["b"], afterStop: [] },
+        status: {
+            user: ["blocked", "depStopped", "GapDep"], dep: ["failed", "startThrew", "dep boom"],
+            replaced: { ok: true, started: true, phase: "running" }, userAfter: "running",
+            replacedBad: { ok: false, phase: "failed", error: "bad2" },
+        },
+        reentry: { selfStop: "idle", stopStarts: "idle", late: "running" },
+    });
+});
+
+test("同一项冲突在各种管理器配置下都收敛(有监听 / 没有 Web Locks / AdGuard / AdGuard 快照)", () => {
+    for (const env of [{}, { NOLOCKS: "1" }, { PROFILE: "adguard" }, { PROFILE: "adguard-snapshot" }]) {
+        const k = runTabs("conflict", env);
+        assert.equal(k.errors, "none", JSON.stringify(env));
+        assert.equal(k.data.converged, true, JSON.stringify(env) + " " + JSON.stringify(k.data.values));
+    }
+});
+
+test("页面桥:插件停了时 $self 上的函数原样交还第一个参数,selfFallback 可以改;运行时照常调用;停了以后的调用被计数", async () => {
+    const B = await importCore("core/lib/bridge.js");
+    const plugin = { name: "Px", extras: (id, items) => [...items, "mine"], keep: x => x + 1, render: () => "R", selfFallback: { render: () => null, label: "fallback" }, label: "live" };
+    let dead = false;
+    B.setPluginResolver(n => (n === "Px" ? plugin : null));
+    B.setPluginDeadCheck(() => dead);
+    B.allowSelfRefs("plugin:Px", "$self.extras(a,b);$self.keep(x);$self.render();$self.label");
+    const f = B.selfFacade("plugin:Px");
+    assert.deepEqual([f.extras(1, ["a"]), f.keep(1), f.render(), f.label, f.settings], [["a", "mine"], 2, "R", "live", undefined]);
+    dead = true;
+    assert.deepEqual([f.keep(5), f.render(), f.label], [5, null, "fallback"]);
+    assert.equal(B.deadSelfHits().Px, 3);
+});
+
+test("内置站点插件里 $self 调用的第一个参数不是要交还的值时,都声明了 selfFallback", () => {
+    // 原样交还第一个参数只对"把站点自己的值传过插件"的调用对;第一个参数是 id、配置字符串、响应对象之类时要有降级
+    const need = { "sites/grok/plugins/GrokMenus/index.js": ["renderUserItems", "conversationExtras", "renderMessageItems"], "sites/grok/plugins/GrokChatBar/index.js": ["renderChatBar"] };
+    for (const [f, names] of Object.entries(need)) {
+        const t = readFileSync(join(root, f), "utf8");
+        const fb = t.slice(t.indexOf("selfFallback"));
+        assert.ok(t.includes("selfFallback"), f);
+        for (const n of names) assert.match(fb.slice(0, 600), new RegExp(`\\b${n}\\b`), `${f}: ${n}`);
+    }
+});
+
+test("类型声明里的每个阶段值和原因都在实现里出现", () => {
+    const d = readFileSync(join(root, "types/index.d.ts"), "utf8");
+    const lits = re => [...d.match(re)[1].matchAll(/"(\w+)"/g)].map(m => m[1]);
+    const phases = lits(/export type PluginPhase = ([^;]+);/), reasons = lits(/export type PluginStatusReason = ([^;]+);/);
+    const impl = readFileSync(join(root, "core/lib/plugins.js"), "utf8");
+    const missing = [...phases, ...reasons].filter(x => !impl.includes(`"${x}"`));
+    assert.deepEqual(missing, []);
+    assert.ok(phases.length >= 10 && reasons.length >= 12);
 });
 
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {

@@ -92,6 +92,8 @@ export default () => U.definePlugin({
     authors: ["Userscript++"],
     required: true,
     hidden: true,
+    // 插件停了时不渲染按钮条(缺省会原样交还第一个参数 "chat",把字符串渲染到页面上)
+    selfFallback: { renderChatBar: () => null },
     patches: [
         {
             find: '"data-query-bar-mode-select":!0',

@@ -8,12 +8,11 @@ import { Settings, PlainSettings, SettingsStore, setDefaultResolver, setPluginRe
 import { addPatch } from "./turbopack.js";
 import { enableStyle, disableStyle } from "./styles.js";
 import { subscribe as subscribeEvent, dispatch, Events } from "./events.js";
-import { addSlotItem, removeSlotItem } from "./slots.js";
 import { findStore, waitFor, filters } from "./finders.js";
 import { getReact } from "../ui/react.js";
 import { getSite } from "./sites.js";
-import { openScope, closeScope, getScope, runAs, suspendScope } from "./scope.js";
-import { guard, reportPluginError, setBreaker, resetBreaker } from "./plugin-errors.js";
+import { openScope, closeScope, getScope, runAs, suspendScope, bindTo, addScopedSlotItem } from "./scope.js";
+import { setBreaker, resetBreaker } from "./plugin-errors.js";
 import { registerCommand } from "./commands.js";
 import { addInterceptor } from "./interceptors.js";
 import { registerSettingsPage } from "./settings-pages.js";
@@ -241,7 +240,7 @@ const patchesLive = p => bootPlan?.[p.name] === true;
 // restartNeeded 设置的值,都按页面加载时记)和"现在的设置"每次收敛后实时比较,不一致的插件在 pendingReload 里;改回去就消失
 let bootChecked = false;
 const bootEnabled = new Map();       // requiresRestart 插件 -> 页面加载时是否开启
-const bootSettings = new Map();      // "插件.键" -> 页面加载时的值(第一次改动时记下)
+const bootSettings = new Map();      // "插件.键" -> 页面加载时的值(启动时对所有 restartNeeded 设置记一次)
 function computeReload() {
     const out = new Set();
     if (bootPlan) {
@@ -267,7 +266,23 @@ function refreshReload() {
     if (changed) dispatch(Events.RELOAD_NEEDED, { reason: "settings", plugins: [...pendingReload], added });
     return added;
 }
-/** restartNeeded 的设置被改了:记下页面加载时的值(只记第一次),重算要刷新的插件 */
+/** 声明了 restartNeeded 的设置项 */
+const restartKeys = p => Object.entries(p?.settings?.def || {}).filter(([, s]) => s && s.restartNeeded).map(([k]) => k);
+/**
+ * 页面加载时的配置快照:requiresRestart 插件的开关、所有 restartNeeded 设置的值。不论站点有没有打包器驱动都在设置读完后调用一次;
+ * 之后"要刷新才生效"一律是"现在的值和这份快照不同",不管改动来自本页、别的标签页、导入还是命令面板
+ */
+export function bootSnapshot() {
+    if (bootChecked) return;
+    for (const p of Object.values(plugins)) {
+        if (p.requiresRestart) bootEnabled.set(p.name, isPluginEnabled(p.name));
+        for (const k of restartKeys(p)) bootSettings.set(`${p.name}.${k}`, JSON.parse(JSON.stringify(PlainSettings.plugins[p.name]?.[k] ?? null)));
+    }
+    bootChecked = true;
+}
+/** 设置改了以后重算要刷新的插件(本页、别的标签页、导入都经这里);返回新增的插件名 */
+export const checkReload = () => refreshReload();
+/** 兼容旧调用:快照在启动时已经记下,这里只补记启动后才注册的插件的设置,并重算 */
 export function noteRestartSetting(name, key, before) {
     const k = `${name}.${key}`;
     if (!bootSettings.has(k)) bootSettings.set(k, before);
@@ -279,10 +294,7 @@ export function noteRestartSetting(name, key, before) {
  * 和启动时补丁计划不一样的插件(例如别的副本里开关不同)不补打补丁,记为"重新加载后生效"。返回这次新发现的插件名
  */
 export function checkPatchPlan() {
-    if (!bootChecked) {
-        for (const p of Object.values(plugins)) if (p.requiresRestart) bootEnabled.set(p.name, isPluginEnabled(p.name));
-        bootChecked = true;
-    }
+    bootSnapshot();
     const added = [...computeReload()].filter(n => !pendingReload.has(n));
     for (const n of computeReload()) pendingReload.add(n);
     if (added.length) logger.info(`补丁要重新加载页面才生效:${added.join(", ")}`);
@@ -326,9 +338,7 @@ function subscribeZustand(p) {
         let unsub = null, cancelled = false;
         const attach = store => {
             if (cancelled) return;
-            const handler = (cur, prev) => {
-                try { conf.handler.call(p, cur, prev); } catch (e) { reportPluginError(p.name, `zustand:${storeName}`, e); }
-            };
+            const handler = bindTo(p.name, `zustand:${storeName}`, (cur, prev) => conf.handler.call(p, cur, prev));
             if (conf.selector) {
                 if (store.subscribe.length >= 2) {
                     try {
@@ -381,6 +391,11 @@ export function startPlugin(p, stack = []) {
     resetBreaker(p.name); // 重新启动后熔断重新计
     const t0 = perfNow();
     const ctx = openScope(p.name);
+    p.suspended = false;
+    // 这一次启动的"结束"信号:start() 完成、失败,或期间被停掉都会兑现(startPluginAsync 等它)
+    let finishStart;
+    p.startSettled = new Promise(r => { finishStart = r; });
+    p.finishStart = finishStart;
     // 插件声明了 connect 时,ctx.fetchExternal 只能访问这些主机
     ctx.fetchExternal = fetchExternalFor(p.name, p.connect);
     try {
@@ -392,47 +407,68 @@ export function startPlugin(p, stack = []) {
         // async start():await 之后的出错不算启动失败(插件已在运行),记为运行期错误。完成前阶段为 starting;
         // 期间被停掉(或停了又启动)的,旧一次的结果作废(和 React effect 的过期标记一样)
         if (started && typeof started.then === "function") {
-            const pr = p.startPromise = Promise.resolve(started).then(() => { if (p.startPromise === pr) p.startPromise = null; }, e => {
+            // 异步 start() 被拒绝 = 启动失败(和 VS Code 的 activate() 一样):回滚已经做的事,阶段为 failed,依赖它的也重新收敛
+            const pr = p.startPromise = Promise.resolve(started).then(() => {
+                if (p.startPromise !== pr) return;
+                const from = pluginPhase(p);
+                p.startPromise = null;
+                resetBreaker(p.name);
+                finishStart();
+                phaseChanged([{ name: p.name, from, to: pluginPhase(p) }]);
+            }, e => {
                 if (p.startPromise !== pr) return;
                 p.startPromise = null;
-                reportPluginError(p.name, "start (async)", e);
+                logger.error(`启动 ${p.name} 失败(async start)`, e);
+                afterReconcile(() => {
+                    if (!p.started || p.startPromise) return;
+                    const from = pluginPhase(p);
+                    stopPlugin(p);
+                    p.startError = e;
+                    p.startFailedAsync = true;
+                    noteFailed(p.name);
+                    phaseChanged([{ name: p.name, from, to: pluginPhase(p) }]);
+                    reconcile(affectedBy(p.name));
+                });
             });
-        }
+        } else finishStart();
         for (const c of p.commands || []) {
             if (!c) continue;
-            track(p.name, registerCommand({ ...c, run: guard(p.name, `command:${c.id ?? c.name}`, c.run, true), id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
+            track(p.name, registerCommand({ ...c, run: bindTo(p.name, `command:${c.id ?? c.name}`, c.run, true), id: String(c.id ?? c.name).includes(".") ? String(c.id ?? c.name) : `${p.name}.${c.id ?? c.name}`, plugin: p.name }));
         }
         for (const [name, fn] of Object.entries(p.interceptors || {})) {
-            if (typeof fn === "function") track(p.name, addInterceptor(name, guard(p.name, `interceptor:${name}`, fn.bind(p), true), { id: p.name }));
+            if (typeof fn === "function") track(p.name, addInterceptor(name, bindTo(p.name, `interceptor:${name}`, fn.bind(p), true), { id: p.name }));
         }
         for (const page of p.settingsPages || []) {
             if (page) track(p.name, registerSettingsPage({ ...page, plugin: p.name }));
         }
-        for (const [slot, value] of Object.entries(pluginSlots(p))) {
-            const list = Array.isArray(value) ? value : [value];
-            list.forEach((item, i) => {
-                if (!item) return;
-                const id = list.length > 1 ? `${p.name}:${i}` : p.name;
-                addSlotItem(slot, id, item);
-                track(p.name, () => removeSlotItem(slot, id));
-            });
-        }
+        // 声明式注入点内容:经作用域加(点击、render 以插件身份运行,停了不再调用);async start() 完成后才加,starting 时不显示
+        const addDefSlots = () => {
+            for (const [slot, value] of Object.entries(pluginSlots(p))) {
+                const list = Array.isArray(value) ? value : [value];
+                list.forEach((item, i) => {
+                    if (!item) return;
+                    addScopedSlotItem(p.name, slot, list.length > 1 ? `${p.name}:${i}` : p.name, item);
+                });
+            }
+        };
+        if (p.startPromise) p.startPromise.then(() => { if (p.started && !p.startPromise && getScope(p.name) === ctx) addDefSlots(); });
+        else addDefSlots();
         for (const [ev, handler] of Object.entries(p.events || {})) {
-            const off = subscribeEvent(ev, guard(p.name, `event:${ev}`, data => handler.call(p, data)));
+            const off = subscribeEvent(ev, bindTo(p.name, `event:${ev}`, data => handler.call(p, data)));
             track(p.name, off);
         }
         if (p.zustand) subscribeZustand(p);
         if (typeof p.onSettingsChange === "function") {
             const prefix = `plugins.${p.name}.`;
-            const fn = (v, path) => {
-                if (path === `${prefix}enabled`) return;
-                try { p.onSettingsChange(v, path); } catch (e) { reportPluginError(p.name, "onSettingsChange", e); }
-            };
+            const call = bindTo(p.name, "onSettingsChange", (v, path) => p.onSettingsChange(v, path));
+            const fn = (v, path) => { if (path !== `${prefix}enabled`) call(v, path); };
             SettingsStore.addPrefixChangeListener(prefix, fn);
             track(p.name, () => SettingsStore.removePrefixChangeListener(prefix, fn));
         }
         p.started = true;
         p.tripped = false;
+        // 同步 start() 期间出的错已经算在启动结果里,不计入运行期的熔断窗口
+        resetBreaker(p.name);
         // 启动耗时(含 start()、注入点、命令登记;不含先启动的依赖),Plugins 页和诊断信息里列出慢的插件
         p.startMs = Math.round((perfNow() - t0) * 10) / 10;
         logger.debug(`已启动 ${p.name}(${p.startMs} ms)`);
@@ -440,7 +476,9 @@ export function startPlugin(p, stack = []) {
     } catch (e) {
         logger.error(`启动 ${p.name} 失败`, e);
         p.startError = e;
+        p.startFailedAsync = false;
         noteFailed(p.name);
+        finishStart();
         // 启动到一半失败:让插件有机会撤掉已经做了的事
         try { runAs(p.name, () => p.stop?.(ctx)); } catch (e2) { logger.error(`${p.name}.stop 出错`, e2); }
         runCleanup(p.name);
@@ -455,11 +493,13 @@ export function startPlugin(p, stack = []) {
 setBreaker(name => {
     const p = plugins[name];
     if (!p || p.required || !p.started) return false;
+    const before = phasesOf([name, ...dependentsOf(name)]);
     p.tripped = true;
     // 先短路:熔断多半发生在派发循环中间(DOM 观察的初次扫描、事件、网络改写),同一轮里后面的回调不再调用它,
     // 停止和清理放到这一轮结束后统一做,不会在清理之后又留下改动。依赖它的插件也停下(它们离了它多半也不能正常工作),刷新后照常启动
     const names = [name, ...dependentsOf(name)];
-    for (const n of names) suspendScope(n);
+    for (const n of names) { suspendScope(n); if (plugins[n]) plugins[n].suspended = true; }
+    phaseChanged(diffPhases(before));
     queueMicrotask(() => reconcile(names));
     return true;
 });
@@ -485,6 +525,8 @@ export function stopPlugin(p) {
     }
     p.started = false;
     p.startPromise = null;
+    p.suspended = false;
+    p.finishStart?.();
     logger.debug(`已停止 ${p.name}`);
     return true;
 }
@@ -502,6 +544,8 @@ function shouldRun(p, seen = new Set()) {
     for (const d of p.dependencies || []) {
         const q = plugins[d];
         if (!q || seen.has(d)) return false;
+        // 依赖启动失败了:依赖方也不该在跑(否则依赖重启失败后依赖方继续在一个停着的依赖上运行)
+        if (q.startError && !q.started) return false;
         if (!shouldRun(q, new Set([...seen, p.name]))) return false;
     }
     return true;
@@ -529,8 +573,11 @@ function withRelated(names) {
 export function pluginPhase(p) {
     if (typeof p === "string") p = plugins[p];
     if (!p) return "missing";
-    if (p.started) return p.startPromise ? "starting" : "running";
+    // 熔断先于"在运行":熔断到真正停下之间(回调已短路)不能显示成 running
     if (p.tripped) return "tripped";
+    // 依赖被熔断、跟着短路、还没停下的
+    if (p.started && p.suspended) return "blocked";
+    if (p.started) return p.startPromise ? "starting" : "running";
     if (p.startError) return "failed";
     if (!isPluginEnabled(p.name)) return patchGated(p) && patchesLive(p) ? "reloadToDisable" : "idle";
     if (patchGated(p) && !patchesLive(p)) return "reloadToEnable";
@@ -538,6 +585,50 @@ export function pluginPhase(p) {
     if (!reachedStages.has(p.startAt ?? StartAt.Init)) return "waiting";
     if ((p.dependencies || []).some(d => !plugins[d]?.started)) return "blocked";
     return "idle";
+}
+
+/**
+ * 阶段加原因(和 Kubernetes Pod condition 的 reason 一样):{ phase, reason, detail }。界面按 reason 决定给什么操作。
+ * blocked 的 reason:depStopped(依赖被熔断、启动失败或停着,可 Restart)、depWaiting(依赖在等后面的启动阶段)、
+ * depReload(依赖要刷新页面才能开)、depSafeMode、depMissing、depCycle、depDisabled(调试开关禁用);
+ * failed 的 reason:startThrew / startRejected;idle 的 reason:off / debugDisabled
+ */
+export function pluginStatus(p) {
+    if (typeof p === "string") p = plugins[p];
+    const phase = pluginPhase(p);
+    if (!p) return { phase, reason: "missing", detail: null };
+    if (phase === "failed") return { phase, reason: p.startFailedAsync ? "startRejected" : "startThrew", detail: String(p.startError?.message ?? p.startError ?? "") };
+    if (phase === "tripped") return { phase, reason: "tooManyErrors", detail: null };
+    if (phase === "idle") return { phase, reason: isPluginEnabled(p.name) && diag.disablePlugins.includes(p.name) ? "debugDisabled" : "off", detail: null };
+    if (phase !== "blocked") return { phase, reason: phase, detail: null };
+    const walk = (q, seen) => {
+        for (const d of q.dependencies || []) {
+            const dep = plugins[d];
+            if (!dep) return { reason: "depMissing", detail: d };
+            if (seen.has(d)) return { reason: "depCycle", detail: d };
+            if (dep.started && !dep.suspended) { const r = walk(dep, new Set([...seen, q.name])); if (r) return r; continue; }
+            if (diag.disablePlugins.includes(d)) return { reason: "depDisabled", detail: d };
+            const ph = pluginPhase(dep);
+            if (ph === "waiting") return { reason: "depWaiting", detail: d };
+            if (ph === "reloadToEnable") return { reason: "depReload", detail: d };
+            if (ph === "safeMode") return { reason: "depSafeMode", detail: d };
+            if (ph === "blocked") return walk(dep, new Set([...seen, q.name])) || { reason: "depStopped", detail: d };
+            return { reason: "depStopped", detail: d };
+        }
+        return null;
+    };
+    const r = (p.started && p.suspended ? { reason: "depStopped", detail: (p.dependencies || []).find(d => plugins[d]?.tripped || plugins[d]?.suspended) ?? null } : null) || walk(p, new Set()) || { reason: "depStopped", detail: null };
+    return { phase, ...r };
+}
+/** 能用 Restart 恢复的:熔断、启动失败、依赖被停 */
+export const canRestartPlugin = p => { const s = pluginStatus(p); return s.phase === "tripped" || s.phase === "failed" || (s.phase === "blocked" && s.reason === "depStopped"); };
+
+// ---------- 阶段变化通知 ----------
+const phasesOf = names => new Map([...names].filter(n => plugins[n]).map(n => [n, pluginPhase(n)]));
+const diffPhases = before => [...before].map(([name, from]) => ({ name, from, to: pluginPhase(name) })).filter(c => c.from !== c.to);
+function phaseChanged(changes) {
+    if (!changes.length) return;
+    try { dispatch(Events.PLUGIN_PHASE, { changes }); } catch (e) { logger.error("阶段通知出错", e); }
 }
 
 let reconciling = false, reconcileAgain = null;
@@ -558,12 +649,14 @@ export function reconcile(names) {
     if (reconciling) { for (const n of set) (reconcileAgain ??= new Set()).add(n); return []; }
     reconciling = true;
     const failed = [];
+    const before = phasesOf(set);
     try {
         let todo = set;
         while (todo) {
             reconcileAgain = null;
             const list = [...todo].map(n => plugins[n]).filter(Boolean);
-            const toStop = list.filter(p => p.started && !shouldRun(p));
+            // 已被熔断短路的(自己或依赖被熔断)一律先真停下:重启 = 先停再启,不留半死的作用域
+            const toStop = list.filter(p => p.started && (p.suspended || !shouldRun(p)));
             // 依赖别人的先停:按依赖深度从深到浅
             toStop.sort((a, b) => allDependencies(b).size - allDependencies(a).size);
             for (const p of toStop) stopPlugin(p);
@@ -573,10 +666,12 @@ export function reconcile(names) {
                 if (p.started || p.startError || !shouldRun(p) || !depsRunning(p)) continue;
                 if (!startPlugin(p)) failed.push(p);
             }
+            if (reconcileAgain) for (const n of reconcileAgain) if (!before.has(n) && plugins[n]) before.set(n, pluginPhase(n));
             todo = reconcileAgain;
         }
     } finally { reconciling = false; reconcileAgain = null; }
-    refreshReload();
+    phaseChanged(diffPhases(before));
+    try { refreshReload(); } catch (e) { logger.error("重算要刷新的插件出错", e); }
     while (settled.length && !reconciling) { try { settled.shift()(); } catch (e) { logger.error("收敛后续步骤出错", e); } }
     return failed;
 }
@@ -600,7 +695,15 @@ const affectedBy = name => {
 // 开关不管是本页改的、别的标签页同步来的还是导入备份改的,都只经这里收敛
 SettingsStore.addPrefixChangeListener("plugins.", (_, path) => {
     const parts = path.split(".");
-    if (parts.length !== 3 || parts[2] !== "enabled" || !plugins[parts[1]]) return;
+    if (parts.length < 3 || !plugins[parts[1]]) return;
+    if (parts[2] !== "enabled") {
+        if (parts.length === 3 && restartKeys(plugins[parts[1]]).includes(parts[2])) refreshReload();
+        return;
+    }
+    if (parts.length !== 3) return;
+    // 从任何来源(本页、别的标签页、导入)关掉:上次的失败和熔断记录一并清掉,关着的卡片不再显示 Restart / failed,以后再开照常启动
+    const p = plugins[parts[1]];
+    if (!isPluginEnabled(p.name) && (p.startError || p.tripped)) clearFailure(p);
     reconcile(affectedBy(parts[1]));
 });
 
@@ -636,8 +739,10 @@ export function stopPluginApi(p) {
 
 /** 等外层收敛排空、异步 start() 完成后,给出插件的最终阶段 */
 const settle = name => new Promise(resolve => afterReconcile(() => {
-    const pr = plugins[name]?.startPromise;
-    (pr || Promise.resolve()).then(() => resolve(pluginPhase(name)));
+    const p = plugins[name];
+    // 异步 start() 完成、失败,或期间被停掉都会兑现;失败时等回滚做完再给阶段
+    const pending = p?.startPromise ? p.startSettled : null;
+    (pending || Promise.resolve()).then(() => new Promise(r => setTimeout(r, 0))).then(() => afterReconcile(() => resolve(pluginPhase(name))));
 }));
 /** startPlugin 的异步版:在插件的 start/stop 里调用也会等真正启动(或确定启动不了)后兑现,兑现值是最终阶段 */
 export function startPluginAsync(p) {
@@ -661,9 +766,11 @@ export function setPluginEnabled(name, on) {
     if (!p || p.required) return false;
     on = !!on;
     const was = isPluginEnabled(name);
+    const before = new Set(pendingReload);
     setIntent(p, on);
-    if (was !== isPluginEnabled(name) || on) dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
-    return pendingReload.has(name);
+    if (was !== isPluginEnabled(name)) dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
+    // 连带的依赖(例如打开 X 让它的补丁依赖 Q 也要刷新)也算
+    return pendingReload.has(name) || [...pendingReload].some(n => !before.has(n));
 }
 
 /** 重新启动出错太多被停掉、启动失败或被依赖拖住的插件:清掉它和它依赖的失败记录再收敛,不改用户的开关 */
@@ -689,10 +796,7 @@ export function togglePlugin(name, enabled) {
         dispatch(Events.PLUGIN_TOGGLE, { name, enabled: true });
         return false;
     }
-    const next = !intentOn(name);
-    setIntent(p, next);
-    dispatch(Events.PLUGIN_TOGGLE, { name, enabled: isPluginEnabled(name) });
-    return needsRestart(p);
+    return setPluginEnabled(name, !intentOn(name));
 }
 
 /**
@@ -711,11 +815,12 @@ export function replacePlugin(def) {
     if (def.settings) def.settings.pluginName = def.name;
     bindMethods(def);
     plugins[def.name] = def;
-    // 换上新定义后经收敛启动(安全模式、阶段、依赖照常检查)
-    if (wasStarted) reconcile([def.name]);
+    // 换上新定义后一律经收敛(不论原来在不在跑:原来启动失败、被熔断的,换了新代码也该试一次;安全模式、阶段、依赖照常检查)
+    reconcile(affectedBy(def.name));
     const started = !!def.started;
+    const phase = pluginPhase(def);
     dispatch(Events.PLUGIN_TOGGLE, { name: def.name, enabled: isPluginEnabled(def.name), replaced: true });
-    return { ok: !wasStarted || started, started, error: def.startError ?? null };
+    return { ok: !def.startError, started, phase, error: def.startError ?? null };
 }
 
 export function registerPlugin(def) {

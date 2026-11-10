@@ -87,7 +87,7 @@ const live = gm => gm.menus.filter(m => !m.removed).map(m => m.name);
     out.settings = {
         aStarred: A.PlainSettings.plugins.Settings.starredPlugins, bStarred: B.PlainSettings.plugins.Settings.starredPlugins ?? [],
         bQuickCss: B.getQuickCss()?.css || "",
-        gmA: [...gmA.store.keys()], gmB: [...gmB.store.keys()],
+        gmA: [...gmA.store.keys()].sort(), gmB: [...gmB.store.keys()].sort(),
         ls: Object.keys(w.localStorage).sort(),
     };
     const sheetText = sel => [...w.document.querySelectorAll(sel)].map(e => e.textContent).join("") + (w.document.adoptedStyleSheets || []).map(s => [...s.cssRules].map(r => r.cssText).join("")).join("");
