@@ -232,21 +232,61 @@ export function registerPatches() {
     }
 }
 
+/** 补丁是否按启动时的计划在本页生效(true);计划里没有生效的带补丁插件要刷新后才能启动 */
+const patchGated = p => !!bootPlan && siteHasDriver() && pluginHasPatches(p) && !runtimeRegistered.has(p.name);
+const patchesLive = p => bootPlan?.[p.name] === true;
+
+// ---------- 要刷新页面才生效的改动 ----------
+// 和 Kubernetes 的 generation / observedGeneration 一样:"本页已加载的配置"(补丁计划、requiresRestart 插件的开关、
+// restartNeeded 设置的值,都按页面加载时记)和"现在的设置"每次收敛后实时比较,不一致的插件在 pendingReload 里;改回去就消失
+let bootChecked = false;
+const bootEnabled = new Map();       // requiresRestart 插件 -> 页面加载时是否开启
+const bootSettings = new Map();      // "插件.键" -> 页面加载时的值(第一次改动时记下)
+function computeReload() {
+    const out = new Set();
+    if (bootPlan) {
+        const now = patchPlan();
+        for (const name of new Set([...Object.keys(bootPlan), ...Object.keys(now)])) if (!!bootPlan[name] !== !!now[name]) out.add(name);
+    }
+    for (const [name, was] of bootEnabled) if (plugins[name] && was !== isPluginEnabled(name)) out.add(name);
+    for (const [k, was] of bootSettings) {
+        const i = k.indexOf(".");
+        const name = k.slice(0, i), key = k.slice(i + 1);
+        if (plugins[name] && JSON.stringify(PlainSettings.plugins[name]?.[key] ?? null) !== JSON.stringify(was ?? null)) out.add(name);
+    }
+    return out;
+}
+/** 重算 pendingReload;有变化时发 RELOAD_NEEDED(带完整的当前列表)。返回新增的插件名 */
+function refreshReload() {
+    if (!bootChecked) return [];
+    const next = computeReload();
+    const added = [...next].filter(n => !pendingReload.has(n));
+    const changed = added.length || [...pendingReload].some(n => !next.has(n));
+    pendingReload.clear();
+    for (const n of next) pendingReload.add(n);
+    if (changed) dispatch(Events.RELOAD_NEEDED, { reason: "settings", plugins: [...pendingReload], added });
+    return added;
+}
+/** restartNeeded 的设置被改了:记下页面加载时的值(只记第一次),重算要刷新的插件 */
+export function noteRestartSetting(name, key, before) {
+    const k = `${name}.${key}`;
+    if (!bootSettings.has(k)) bootSettings.set(k, before);
+    return refreshReload();
+}
+
 /**
- * 完整设置读完后核对补丁计划:和启动时不一样的插件(例如别的副本里开关不同)不补打补丁,记为"重新加载后生效"。
- * 返回这次新发现的插件名
+ * 完整设置读完后核对:记下页面加载时的状态,之后每次收敛都和它比较。
+ * 和启动时补丁计划不一样的插件(例如别的副本里开关不同)不补打补丁,记为"重新加载后生效"。返回这次新发现的插件名
  */
 export function checkPatchPlan() {
-    if (!bootPlan) return [];
-    const now = patchPlan();
-    const changed = [];
-    for (const name of new Set([...Object.keys(bootPlan), ...Object.keys(now)])) {
-        if (!!bootPlan[name] === !!now[name]) { pendingReload.delete(name); continue; }
-        if (!pendingReload.has(name)) changed.push(name);
-        pendingReload.add(name);
+    if (!bootChecked) {
+        for (const p of Object.values(plugins)) if (p.requiresRestart) bootEnabled.set(p.name, isPluginEnabled(p.name));
+        bootChecked = true;
     }
-    if (changed.length) logger.info(`补丁要重新加载页面才生效:${changed.join(", ")}`);
-    return changed;
+    const added = [...computeReload()].filter(n => !pendingReload.has(n));
+    for (const n of computeReload()) pendingReload.add(n);
+    if (added.length) logger.info(`补丁要重新加载页面才生效:${added.join(", ")}`);
+    return added;
 }
 
 // ---------- 注入点 ----------
@@ -445,6 +485,8 @@ export function stopPlugin(p) {
 /** 期望运行:已启用、安全模式允许、启动阶段已到、自己和依赖都没被熔断 */
 function shouldRun(p) {
     if (!isPluginEnabled(p.name)) return false;
+    // 补丁没在本页生效的插件不启动(半启动的插件没有补丁,行为不完整);刷新后按新计划启动
+    if (patchGated(p) && !patchesLive(p)) return false;
     if (isSafeMode() && !p.required) return false;
     if (!reachedStages.has(p.startAt ?? StartAt.Init)) return false;
     if (p.tripped) return false;
@@ -459,7 +501,8 @@ export function pluginPhase(p) {
     if (p.started) return "running";
     if (p.tripped) return "tripped";
     if (p.startError) return "failed";
-    if (!isPluginEnabled(p.name)) return "idle";
+    if (!isPluginEnabled(p.name)) return patchGated(p) && patchesLive(p) ? "reloadToDisable" : "idle";
+    if (patchGated(p) && !patchesLive(p)) return "reloadToEnable";
     if (isSafeMode() && !p.required) return "safeMode";
     if (!reachedStages.has(p.startAt ?? StartAt.Init)) return "waiting";
     if ([...allDependencies(p)].some(d => plugins[d]?.tripped)) return "blocked";
@@ -492,6 +535,7 @@ export function reconcile(names) {
             todo = reconcileAgain;
         }
     } finally { reconciling = false; reconcileAgain = null; }
+    refreshReload();
     return failed;
 }
 

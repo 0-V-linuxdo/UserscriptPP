@@ -3,7 +3,7 @@ import { h, useState, useRef, useEffect, useForceUpdate, useSubscription, ErrorB
 import { onPluginError, onPluginTripped, pluginErrorsOf } from "../lib/plugin-errors.js";
 import { Switch, Select, Input, Button, Tooltip, IconButton } from "../ui/components.js";
 import {
-    plugins, isPluginEnabled, togglePlugin, needsRestart, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf,
+    plugins, isPluginEnabled, togglePlugin, getVisibleSettings, isEnabledAsDependency, pendingReload, dependentsOf, noteRestartSetting,
 } from "../lib/plugins.js";
 import { Settings, SettingsStore } from "../lib/settings.js";
 import { subscribe, dispatch, Events } from "../lib/events.js";
@@ -45,37 +45,28 @@ function useLive() {
     }, []);
 }
 
-/** 记录打开本页时的状态,决定是否需要提示刷新 */
+/** 要刷新页面才生效的改动:由 plugins.js 的 pendingReload 实时给出(按页面加载时的状态比较,切页不丢);一次只弹一个对话框 */
 function useReloadTracker() {
-    const ref = useRef(null);
-    if (!ref.current) {
-        ref.current = {
-            initial: Object.fromEntries(Object.keys(plugins).map(n => [n, isPluginEnabled(n)])),
-            settings: new Map(), // "插件.键" -> 初始值
-            dismissed: false,
-        };
-    }
+    const ref = useRef({ dismissed: false, prompting: false });
     const [, setTick] = useState(0);
     const t = ref.current;
-    const dirty = () => Object.values(plugins).some(p => needsRestart(p) && (t.initial[p.name] ?? false) !== isPluginEnabled(p.name))
-        || [...t.settings].some(([k, init]) => { const [n, key] = k.split("."); return !Object.is(Settings.plugins[n]?.[key], init); });
+    useEffect(() => subscribe(Events.RELOAD_NEEDED, () => { if (!pendingReload.size) t.dismissed = false; setTick(x => x + 1); }), []);
     const prompt = async () => {
         setTick(x => x + 1);
-        if (!dirty()) { t.dismissed = false; return; }
-        dispatch(Events.RELOAD_NEEDED, null);
-        if (t.dismissed) return;
-        const ok = await confirmDialog({ title: "Reload required", body: "This plugin changes the site's code, so you need to reload the page.", confirmText: "Reload", cancelText: "Later" });
+        if (!pendingReload.size) { t.dismissed = false; return; }
+        if (t.dismissed || t.prompting) return;
+        t.prompting = true;
+        let ok = false;
+        try {
+            ok = await confirmDialog({ title: "Reload required", body: `${[...pendingReload].join(", ")} ${pendingReload.size === 1 ? "changes" : "change"} the site's code or ${pendingReload.size === 1 ? "needs" : "need"} a fresh start, so reload the page to apply.`, confirmText: "Reload", cancelText: "Later" });
+        } finally { t.prompting = false; }
         if (ok) location.reload();
         else { t.dismissed = true; setTick(x => x + 1); }
     };
     return {
-        get showBanner() { return t.dismissed && dirty(); },
-        onToggled: p => { if (needsRestart(p)) prompt(); else setTick(x => x + 1); },
-        onSettingRestart: (name, key, before) => {
-            const k = `${name}.${key}`;
-            if (!t.settings.has(k)) t.settings.set(k, before);
-            prompt();
-        },
+        get showBanner() { return t.dismissed && pendingReload.size > 0; },
+        onToggled: p => { if (pendingReload.has(p.name)) prompt(); else setTick(x => x + 1); },
+        onSettingRestart: (name, key, before) => { noteRestartSetting(name, key, before); if (pendingReload.has(name)) prompt(); else setTick(x => x + 1); },
     };
 }
 

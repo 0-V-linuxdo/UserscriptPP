@@ -120,7 +120,22 @@ if (process.env.DUMP) {
         await sleep(300);
         const U = w[KEY].api;
         const rep = U.patchReport();
+        // TOGGLE=1:启动后打开一个启动时补丁计划里没开的插件(别的标签页改的也走同一条路),再关回去
+        let toggle;
+        if (process.env.TOGGLE) {
+            const reloads = [];
+            U.subscribe?.("reloadNeeded", e => reloads.push(e?.plugins ?? null));
+            U.Settings.plugins[process.env.TOGGLE].enabled = true;
+            await sleep(20);
+            const p = U.plugins[process.env.TOGGLE];
+            toggle = { on: { started: !!p.started, phase: U.pluginPhase(p.name), pending: U.reloadNeeded() } };
+            U.Settings.plugins[process.env.TOGGLE].enabled = false;
+            await sleep(20);
+            toggle.off = { started: !!p.started, phase: U.pluginPhase(p.name), pending: U.reloadNeeded() };
+            toggle.events = reloads;
+        }
         console.log(JSON.stringify({
+            ...(toggle ? { toggle } : {}),
             inline: w.__inline?.INLINE_ENTRY ?? null, late: w.__late?.INLINE_LATE ?? null,
             found: U.findByProps("INLINE_ENTRY")?.INLINE_ENTRY ?? null,
             applied: rep.stats.applied, unhooked: !Object.getOwnPropertyDescriptor(w.Function.prototype, "m"),

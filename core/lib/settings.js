@@ -347,12 +347,12 @@ export function loadSync() {
 }
 
 /**
- * 启动快照:只有异步读取的管理器上,同步阶段拿不到设置,补丁计划却必须在这时定下。
- * 和 Vencord 网页版一样,在站点 localStorage 里另存一份各插件的开关(只有开关),同步读它。
+ * 启动快照:管理器只有异步读取时,同步阶段拿不到设置,补丁计划却必须在这时定下。
+ * 和 Vencord 网页版一样,在站点 localStorage 里另存一份各插件的开关(只有开关),同步读它;每次保存、收到别的标签页的写入后更新(不会跨站点过时)。
  * 由站点驱动的启动流程在选好站点后、登记补丁前调用;同步读取成功时不用它
  */
 export function applyBootSnapshot() {
-    if (!asyncOnlyGm || !useSiteStorage()) return false;
+    if (!useSiteStorage()) return false;
     let snap;
     try { snap = JSON.parse((W.localStorage || localStorage).getItem(BOOT_KEY) || "null"); } catch { return false; }
     const enabled = snap && typeof snap.enabled === "object" ? snap.enabled : null;
@@ -369,7 +369,8 @@ export function applyBootSnapshot() {
 }
 
 function writeBootSnapshot() {
-    if (!asyncOnlyGm || !useSiteStorage()) return;
+    // 同步读取可用的管理器上不需要(GM 为空时救回后会写回 GM,下次同步读得到);localStorage 是同步写入,能不写就不写
+    if (!ready || !asyncOnlyGm || !useSiteStorage()) return;
     const enabled = {};
     for (const [name, entry] of Object.entries(PlainSettings.plugins || {})) {
         if (typeof entry?.enabled === "boolean") enabled[name] = entry.enabled;

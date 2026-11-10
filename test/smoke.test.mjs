@@ -615,6 +615,9 @@ test("补丁计划:启动时一次定下(含依赖拉起的插件);完整设置�
     assert.deepEqual({ inline: c.inline, late: c.late, reload: c.reload, errors: c.pageErrors, logs: c.logs }, { inline: "inline patched", late: "late hello", reload: [], errors: [], logs: [] });
     // 快照里的开关不算新设置:读完后照旧以存下来的为准
     assert.deepEqual({ Needs: c.stored.Needs, Hello: c.stored.Hello }, { Needs: false, Hello: true });
+    // 启动后打开一个计划里没开补丁的插件(本页或别的标签页):不半启动,标为刷新后生效;关回去后提示消失
+    const d = run({ NOGM: "1", PRESET: JSON.stringify({ [SK]: saved, [`${SK}:boot`]: b.boot }), TOGGLE: "Needs" });
+    assert.deepEqual(d.toggle, { on: { started: false, phase: "reloadToEnable", pending: ["Needs"] }, off: { started: false, phase: "idle", pending: [] }, events: [["Needs"], []] });
 });
 
 test("更新:版本变了提示更新日志,到期自动检查,发现新版本可一键更新;没配更新地址时只有更新日志", () => {

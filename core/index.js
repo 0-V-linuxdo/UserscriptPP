@@ -408,6 +408,7 @@ function main() {
         isPluginEnabled: P.isPluginEnabled,
         togglePlugin: P.togglePlugin,
         pluginPhase: P.pluginPhase,
+        reloadNeeded: () => [...P.pendingReload],
         definePlugin: P.definePlugin,
         definePluginSettings: P.definePluginSettings,
         migratePluginSettings: P.migratePluginSettings,
