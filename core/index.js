@@ -44,7 +44,7 @@ import { PluginModal } from "./settings/PluginModal.js";
 import { checkPatches, describeResult, crawlChunks, extractChunkPaths } from "./lib/reporter.js";
 import { trackFinders, failedFinders } from "./lib/finder-log.js";
 import { ownByCurrent } from "./lib/scope.js";
-import { installBridge, setPluginResolver, setSelfTarget } from "./lib/bridge.js";
+import { installBridge, setPluginResolver, setSelfTarget, setPluginDeadCheck } from "./lib/bridge.js";
 import { patchMethod, isPatched } from "./lib/patcher.js";
 import { rewriteRequest, rewriteResponse, onWebSocket, onEventSource, makeResponse } from "./lib/network.js";
 import { dataStoreFor, exportData, importData, pruneData } from "./lib/datastore.js";
@@ -534,6 +534,7 @@ function main() {
     installNamespaces(api);
     // 页面上只挂页面桥(补丁用的门面和编译槽),完整接口 api 不出闭包
     setPluginResolver(name => P.plugins[name] ?? null);
+    setPluginDeadCheck(p => ["tripped", "reloadToDisable", "blocked"].includes(P.pluginPhase(p)));
     setSelfTarget("settingsHost", () => Sites.getSite().settingsHost ?? null);
     installBridge(W, api);
     // 控制台调试入口:挂到本脚本自己配置的名字上;已被占用时不覆盖

@@ -12,7 +12,7 @@ import { addSlotItem, removeSlotItem } from "./slots.js";
 import { findStore, waitFor, filters } from "./finders.js";
 import { getReact } from "../ui/react.js";
 import { getSite } from "./sites.js";
-import { openScope, closeScope, getScope, runAs } from "./scope.js";
+import { openScope, closeScope, getScope, runAs, suspendScope } from "./scope.js";
 import { guard, reportPluginError, setBreaker, resetBreaker } from "./plugin-errors.js";
 import { registerCommand } from "./commands.js";
 import { addInterceptor } from "./interceptors.js";
@@ -452,8 +452,11 @@ setBreaker(name => {
     const p = plugins[name];
     if (!p || p.required || !p.started) return false;
     p.tripped = true;
-    // 依赖它的插件也停下(它们离了它多半也不能正常工作),刷新后照常启动
-    reconcile([name, ...dependentsOf(name)]);
+    // 先短路:熔断多半发生在派发循环中间(DOM 观察的初次扫描、事件、网络改写),同一轮里后面的回调不再调用它,
+    // 停止和清理放到这一轮结束后统一做,不会在清理之后又留下改动。依赖它的插件也停下(它们离了它多半也不能正常工作),刷新后照常启动
+    const names = [name, ...dependentsOf(name)];
+    for (const n of names) suspendScope(n);
+    queueMicrotask(() => reconcile(names));
     return true;
 });
 

@@ -31,6 +31,12 @@ export const allowedSelfRefs = key => [...(allowed.get(key) || [])];
 
 /** 插件门面的目标:按名字现查(热替换插件后自动指向新定义) */
 export function setPluginResolver(fn) { pluginResolver = typeof fn === "function" ? fn : () => null; }
+/** 插件是否"补丁还在、插件已停"(出错太多被停掉、关了但补丁本页仍在、依赖被停掉):这时门面上的函数是空操作、值为 undefined */
+let pluginDead = () => false;
+export function setPluginDeadCheck(fn) { pluginDead = typeof fn === "function" ? fn : () => false; }
+const NOOP = () => undefined;
+const deadHits = new Map(); // 插件名 -> 插件停了之后补丁还调用它的次数
+export const deadSelfHits = () => Object.fromEntries(deadHits);
 export function setSelfTarget(key, getTarget) { resolvers.set(key, getTarget); }
 
 const targetOf = key => key.startsWith("plugin:") ? pluginResolver(key.slice(7)) : resolvers.get(key)?.() ?? null;
@@ -52,6 +58,10 @@ export function selfFacade(key) {
             const t = targetOf(key);
             if (!t) return undefined;
             const v = t[prop];
+            if (key.startsWith("plugin:") && pluginDead(t)) {
+                deadHits.set(t.name, (deadHits.get(t.name) || 0) + 1);
+                return typeof v === "function" ? NOOP : undefined;
+            }
             return typeof v === "function" ? bound(t, v) : v;
         },
         has(_, prop) { return typeof prop === "string" && !!allowed.get(key)?.has(prop); },

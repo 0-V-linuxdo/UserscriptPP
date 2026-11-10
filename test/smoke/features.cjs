@@ -500,6 +500,8 @@ const px = `uspp-${ID}-`;
         // 依赖被熔断:依赖它的也停下,并且不会被悄悄重启
         U.startPlugin("DepA");
         for (let i = 0; i < 10; i++) bctx.reportError(new Error("dep boom"), "test");
+        // 熔断先短路,停止在这一轮结束后统一做
+        await new Promise(r => setTimeout(r, 0));
         dep.trippedDep = { a: runs("DepA"), b: runs("DepB"), phaseA: U.pluginPhase("DepA") ?? null };
         U.stopPlugin("DepA");
         // 启动到一半失败:调用 stop 收尾

@@ -160,6 +160,8 @@ export interface PluginCtx {
     reportError(err: unknown, where?: string): void;
     /** 作用域是否已释放(插件已停用) */
     readonly disposed: boolean;
+    /** 插件是否还在运行(没停止、没被熔断):异步工作完成后据此决定要不要继续 */
+    readonly live: boolean;
     /** 目前还登记着的清理条数;提前撤销的、到点执行过的定时器不算 */
     readonly pending: number;
     /** 本插件的数据存储(IndexedDB;.global 存在 GM 存储里跨网站共享) */

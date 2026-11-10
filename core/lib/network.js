@@ -210,10 +210,12 @@ export const rewriteResponse = (matcher, handler) => addSub(resRw, matcher, hand
 
 // ---------- WebSocket / EventSource ----------
 /** 消息事件:在本实例最先登记的监听里处理;返回 false 拦下(页面的监听和 onmessage 都收不到),返回其他值替换 data */
-function hookMessages(target, url, subs, kind) {
+// 钩子按每条消息现查(不在 socket 创建时冻结):插件停了就不再调用它的钩子,后来启用的插件也能挂上已经打开的 socket
+const liveSubs = (set, url, kind, hook) => { const out = []; for (const s of set) if (s.hooks[hook] && test(s.matcher, url, kind)) out.push(s); return out; };
+function hookMessages(target, url, subsSet, kind) {
     target.addEventListener("message", e => {
         let data = e.data, changed = false;
-        for (const s of subs) {
+        for (const s of liveSubs(subsSet, url, kind, "message")) {
             if (!s.hooks.message) continue;
             let r;
             try { r = s.hooks.message(data, target); } catch (err) { logger.error(`${kind} 消息处理出错`, err); continue; }
@@ -231,9 +233,7 @@ function wrapConstructor(name, subsSet, onCreate) {
         construct(target, args, newTarget) {
             const obj = Reflect.construct(target, args, newTarget === P ? target : newTarget);
             try {
-                const url = absUrl(args[0]);
-                const subs = [...subsSet].filter(s => test(s.matcher, url, name));
-                if (subs.length) onCreate(obj, url, subs);
+                onCreate(obj, absUrl(args[0]));
             } catch (e) { logger.error(`${name} 包装出错`, e); }
             return obj;
         },
@@ -245,25 +245,22 @@ function wrapConstructor(name, subsSet, onCreate) {
 export function onWebSocket(matcher, hooks = {}) {
     if (!wsInstalled) {
         wsInstalled = true;
-        wrapConstructor("WebSocket", wsSubs, (ws, url, subs) => {
-            hookMessages(ws, url, subs, "WebSocket");
-            if (subs.some(s => s.hooks.send)) {
-                const send = ws.send;
-                Object.defineProperty(ws, "send", {
-                    configurable: true, writable: true,
-                    value: function (data) {
-                        for (const s of subs) {
-                            if (!s.hooks.send) continue;
-                            let r;
-                            try { r = s.hooks.send(data, ws); } catch (e) { logger.error("WebSocket 发送处理出错", e); continue; }
-                            if (r === false) return undefined;
-                            if (r !== undefined) data = r;
-                        }
-                        return send.call(this, data);
-                    },
-                });
-            }
-            for (const s of subs) if (s.hooks.open) { try { s.hooks.open(ws, url); } catch (e) { logger.error("WebSocket open 处理出错", e); } }
+        wrapConstructor("WebSocket", wsSubs, (ws, url) => {
+            hookMessages(ws, url, wsSubs, "WebSocket");
+            const send = ws.send;
+            Object.defineProperty(ws, "send", {
+                configurable: true, writable: true,
+                value: function (data) {
+                    for (const s of liveSubs(wsSubs, url, "WebSocket", "send")) {
+                        let r;
+                        try { r = s.hooks.send(data, ws); } catch (e) { logger.error("WebSocket 发送处理出错", e); continue; }
+                        if (r === false) return undefined;
+                        if (r !== undefined) data = r;
+                    }
+                    return send.call(this, data);
+                },
+            });
+            for (const s of liveSubs(wsSubs, url, "WebSocket", "open")) { try { s.hooks.open(ws, url); } catch (e) { logger.error("WebSocket open 处理出错", e); } }
         });
     }
     const s = { matcher, hooks };
@@ -275,9 +272,9 @@ export function onWebSocket(matcher, hooks = {}) {
 export function onEventSource(matcher, hooks = {}) {
     if (!esInstalled) {
         esInstalled = true;
-        wrapConstructor("EventSource", esSubs, (es, url, subs) => {
-            hookMessages(es, url, subs, "EventSource");
-            for (const s of subs) if (s.hooks.open) { try { s.hooks.open(es, url); } catch (e) { logger.error("EventSource open 处理出错", e); } }
+        wrapConstructor("EventSource", esSubs, (es, url) => {
+            hookMessages(es, url, esSubs, "EventSource");
+            for (const s of liveSubs(esSubs, url, "EventSource", "open")) { try { s.hooks.open(es, url); } catch (e) { logger.error("EventSource open 处理出错", e); } }
         });
     }
     const s = { matcher, hooks };

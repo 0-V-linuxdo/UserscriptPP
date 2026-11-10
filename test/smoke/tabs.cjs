@@ -101,6 +101,24 @@ const sysOf = t => t.P.PlainSettings.plugins.Settings;
         try { read = a.P.plugins.RegProbe.settings.store.mode; } catch (e) { read = "throws " + e.message; }
         out.registered = { before, entry: "RegProbe" in a.P.PlainSettings.plugins, read, stored: stored().plugins.RegProbe?.mode ?? null };
     }
+    if (scenario === "trip") {
+        // 熔断发生在 DOM 批处理中间:同一批里后面的元素不再调用这个插件,清理之后页面上不留它加的东西
+        const P = a.P, d = a.w.document;
+        P.registerPlugin(P.definePlugin({
+            name: "TripProbe", description: "x", authors: ["t"],
+            start(ctx) {
+                ctx.observe(".msg", { added: el => { const m = d.createElement("i"); m.className = "trip-mark"; el.append(m); throw new Error("boom"); } });
+                ctx.register(() => d.querySelectorAll(".trip-mark").forEach(m => m.remove()));
+            },
+        }));
+        P.startPlugin("TripProbe");
+        const box = d.createElement("div");
+        for (let i = 0; i < 300; i++) { const m = d.createElement("p"); m.className = "msg"; box.append(m); }
+        d.body.append(box);
+        await sleep(300);
+        out.trip = { marks: d.querySelectorAll(".trip-mark").length, started: !!P.plugins.TripProbe.started, phase: P.pluginPhase("TripProbe"), errors: P.pluginErrorStats().find(x => x.name === "TripProbe")?.count ?? null };
+        errors.length = 0; // 插件故意抛的错会记日志
+    }
     out.writes = backgroundWrites;
     console.log(JSON.stringify(out, null, 1));
     console.log("ERRORS:", errors.length ? errors.join("\n") : "none");

@@ -27,7 +27,8 @@ function createScope(name) {
     // Set 保持插入顺序;提前撤销或定时器到点后,条目连同闭包从这里删掉,长开的标签页不会越积越多
     const list = new Set();
     const ac = typeof AbortController === "function" ? new AbortController() : null;
-    let disposed = false;
+    let disposed = false, suspended = false;
+    const live = () => !disposed && !suspended;
     const register = fn => {
         if (typeof fn !== "function") return fn;
         if (disposed) { try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); } return fn; }
@@ -43,8 +44,10 @@ function createScope(name) {
         register(once);
         return once;
     };
-    const g = (where, fn) => guard(name, where, fn);
-    const t = (where, fn) => guard(name, where, fn, true);
+    const g = (where, fn) => guard(name, where, fn, false, live);
+    const t = (where, fn) => guard(name, where, fn, true, live);
+    // 方法补丁的 instead:插件停了就直接调用原方法(不能返回 undefined 顶替原方法的结果)
+    const insteadOf = fn => typeof fn === "function" ? guard(name, "patch:instead", (args, next, self) => live() ? fn(args, next, self) : next(...args), true) : fn;
     const wrapHooks = (kind, hooks) => hooks && typeof hooks === "object"
         ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`${kind}:${k}`, v)])) : hooks;
     // 注入点内容的点击处理(onClick / onSelect)出错也归到插件
@@ -54,6 +57,8 @@ function createScope(name) {
         plugin: name,
         get signal() { return ac?.signal; },
         get disposed() { return disposed; },
+        /** 插件是否还在运行(没停止、没被熔断);异步工作完成后可以据此决定要不要继续 */
+        get live() { return live(); },
         get pending() { return list.size; },
         register,
         // 插件给的回调都包一层,出错记到本插件名下(见 plugin-errors.js)。返回值有意义的(网络改写、渲染钩子、方法补丁)照常抛给调用方
@@ -70,7 +75,7 @@ function createScope(name) {
         onSlotChange: (slot, fn) => own(onSlotChange(slot, g(`slot:${slot}`, fn))),
         addSlotItem: (slot, id, def) => { addSlotItem(slot, id, wrapItem(slot, def)); return own(() => removeSlotItem(slot, id)); },
         patch: (obj, method, hooks) => own(patchMethod(obj, method, hooks && typeof hooks === "object"
-            ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, t(`patch:${method}`, v)])) : hooks)),
+            ? Object.fromEntries(Object.entries(hooks).map(([k, v]) => [k, k === "instead" ? insteadOf(v) : t(`patch:${method}`, v)])) : hooks)),
         listen: (target, type, fn, opts) => {
             if (!target?.addEventListener) return () => { };
             const wrapped = typeof fn === "function" ? g(`listen:${type}`, fn) : fn;
@@ -103,7 +108,9 @@ function createScope(name) {
             try { fn(); } catch (e) { logger.error(`${name} 清理出错`, e); }
         }
     };
-    return { ctx, dispose, register, unregister };
+    // 熔断:先让本作用域的回调全部短路,真正的停止和清理稍后统一做
+    const suspend = () => { suspended = true; };
+    return { ctx, dispose, register, unregister, suspend, live };
 }
 
 /** 插件启动时取一个新作用域(上一次的已在停止时释放) */
@@ -123,6 +130,10 @@ export function closeScope(name) {
 }
 
 export const getScope = name => scopes.get(name)?.ctx ?? null;
+/** 让插件的回调立即短路(熔断时用;之后照常停止插件) */
+export const suspendScope = name => scopes.get(name)?.suspend();
+/** 插件的作用域是否还活着 */
+export const scopeLive = name => !!scopes.get(name)?.live();
 
 /** 给"同步执行 start() 期间直接调用 U.*"用:返回的撤销函数登记到当前插件 */
 export function ownByCurrent(off) {

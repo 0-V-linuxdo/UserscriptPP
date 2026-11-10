@@ -37,10 +37,15 @@ export function reportPluginError(plugin, where, err) {
     }
 }
 
-/** 包一层:同步异常和返回的 Promise 被拒都记到插件名下。rethrow 为 true 时照常抛出(调用方要据此跳过),否则吞掉 */
-export function guard(plugin, where, fn, rethrow = false) {
+/**
+ * 包一层:同步异常和返回的 Promise 被拒都记到插件名下。rethrow 为 true 时照常抛出(调用方要据此跳过),否则吞掉。
+ * live 给出时,插件已停止(或刚被熔断、正在停止)就不再调用,直接返回 undefined:和 DOM 事件规范里监听器的 removed 标志一样,
+ * 派发途中被停掉的插件,同一轮里后面的回调也不再执行
+ */
+export function guard(plugin, where, fn, rethrow = false, live = null) {
     if (typeof fn !== "function" || !plugin) return fn;
     return function (...a) {
+        if (live && !live()) return undefined;
         let r;
         try { r = fn.apply(this, a); } catch (e) { reportPluginError(plugin, where, e); if (rethrow) throw e; return undefined; }
         if (r && typeof r.then === "function") {

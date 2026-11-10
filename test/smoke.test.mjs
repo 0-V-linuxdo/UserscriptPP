@@ -1033,6 +1033,12 @@ test("别的标签页删掉整条插件设置:本页已注册的插件重置为�
     assert.deepEqual(data.registered, { before: "dark", entry: true, read: "auto", stored: null });
 });
 
+test("熔断发生在派发中间:同一批里后面的回调不再调用被停掉的插件,清理之后不留它加的东西", () => {
+    const { data, errors } = runTabs("trip");
+    assert.equal(errors, "none");
+    assert.deepEqual(data.trip, { marks: 0, started: false, phase: "tripped", errors: 10 });
+});
+
 test("类型声明:插件、作用域、站点和接口总表上的每个成员都有文档注释", () => {
     const lines = readFileSync(join(root, "types/index.d.ts"), "utf8").split("\n");
     const targets = new Set(["UsppApi", "PluginCtx", "PluginDef", "SiteDef", "SettingCommon", "DefinedSettings", "PluginDataStore", "Patch", "PatchReplacement", "PatchHooks"]);
